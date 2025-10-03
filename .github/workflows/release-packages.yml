@@ -67,37 +67,29 @@ jobs:
       uses: softprops/action-gh-release@v1
       with:
         tag_name: ${{ steps.release_tag.outputs.tag_name }}
-        name: VibeStack Release ${{ steps.release_tag.outputs.tag_name }}
+        name: VibeStack Coolify ${{ steps.release_tag.outputs.tag_name }}
         body: |
-          🚀 **VibeStack - Oracle Cloud Always Free Deployments**
+          🚀 **VibeStack Coolify - Oracle Cloud Always Free Deployment**
 
-          Deploy KASM Workspaces and/or Coolify on Oracle Cloud Infrastructure using only Always Free tier resources.
+          Deploy Coolify on Oracle Cloud Infrastructure using only Always Free tier resources.
 
-          ## 📦 Deployment Packages
+          ## 📦 Deployment Package
 
           | Package | Resources | Use Case |
           |---------|-----------|----------|
-          | **vibestack-full.zip** | KASM + Coolify (4 OCPUs, 24GB RAM) | Full workspace and app platform |
-          | **vibestack-coolify.zip** | Coolify server (2 OCPUs, 12GB RAM) | Self-hosted applications only |
-          | **vibestack-kasm.zip** | KASM server (2 OCPUs, 12GB RAM) | Remote workspaces only |
+          | **vibestack-coolify.zip** | Coolify server (2 OCPUs, 12GB RAM, 100GB storage) | Self-hosted application platform |
 
           ## 🚀 Deploy to Oracle Cloud
 
-          Click your preferred deployment option:
-
-          ### VibeStack Full (Both Servers)
-          [![Deploy to Oracle Cloud](https://oci-resourcemanager-plugin.plugins.oci.oraclecloud.com/latest/deploy-to-oracle-cloud.svg)](https://cloud.oracle.com/resourcemanager/stacks/create?zipUrl=https://github.com/${{ github.repository }}/releases/latest/download/vibestack-full.zip)
-
-          ### VibeStack Coolify
           [![Deploy to Oracle Cloud](https://oci-resourcemanager-plugin.plugins.oci.oraclecloud.com/latest/deploy-to-oracle-cloud.svg)](https://cloud.oracle.com/resourcemanager/stacks/create?zipUrl=https://github.com/${{ github.repository }}/releases/latest/download/vibestack-coolify.zip)
 
-          ### VibeStack KASM
-          [![Deploy to Oracle Cloud](https://oci-resourcemanager-plugin.plugins.oci.oraclecloud.com/latest/deploy-to-oracle-cloud.svg)](https://cloud.oracle.com/resourcemanager/stacks/create?zipUrl=https://github.com/${{ github.repository }}/releases/latest/download/vibestack-kasm.zip)
-
-          ## 📋 Requirements
-          - OCI Always Free tier account
-          - SSH public key for server access
-          - Target region with A1 compute capacity
+          ## 📋 Prerequisites
+          1. Oracle Cloud Always Free account
+          2. ED25519 SSH key pair
+          3. Cloudflare account (free)
+          4. Cloudflare Zero Trust account (for tunnels)
+          5. Domain managed by Cloudflare
+          6. Cloudflare origin certificate for your domain
 
           ## 🛠️ What's Included
           - Custom compartment (you name it during deployment)
@@ -106,12 +98,14 @@ jobs:
           - SSH access with your public key
           - Always Free tier compatible - no charges
 
+          ## 🔮 Coming Soon
+          - **VibeStack KASM**: Remote workspace server deployment
+          - **VibeStack Full**: Combined KASM + Coolify deployment
+
           ## 📖 Documentation
-          See the [repository README](https://github.com/${{ github.repository }}) for detailed documentation and post-deployment tools.
+          See the [repository README](https://github.com/${{ github.repository }}) for detailed setup instructions and documentation.
         files: |
-          vibestack-full.zip
           vibestack-coolify.zip
-          vibestack-kasm.zip
         draft: false
         prerelease: false
 
@@ -132,30 +126,23 @@ jobs:
           "datasources.tf"
         )
 
-        for package in "vibestack-full.zip" "vibestack-coolify.zip" "vibestack-kasm.zip"; do
-          echo -e "\n✅ Checking $package:"
-          for file in "${REQUIRED_FILES[@]}"; do
-            if unzip -l "$package" | grep -q "$file"; then
-              echo "  ✓ $file"
-            else
-              echo "  ✗ $file (MISSING)"
-            fi
-          done
+        echo -e "\n✅ Checking vibestack-coolify.zip:"
+        for file in "${REQUIRED_FILES[@]}"; do
+          if unzip -l "vibestack-coolify.zip" | grep -q "$file"; then
+            echo "  ✓ $file"
+          else
+            echo "  ✗ $file (MISSING)"
+          fi
         done
 
     - name: Summary
       run: |
-        echo "🎉 Successfully created VibeStack deployment packages!"
+        echo "🎉 Successfully created VibeStack Coolify deployment package!"
         echo ""
-        echo "📦 Generated packages:"
-        echo "  • vibestack-full.zip - Complete VibeStack (KASM + Coolify)"
-        echo "  • vibestack-coolify.zip - VibeStack Coolify Only"
-        echo "  • vibestack-kasm.zip - VibeStack KASM Only"
+        echo "📦 Generated package:"
+        echo "  • vibestack-coolify.zip - VibeStack Coolify deployment"
         echo ""
-        echo "🚀 These packages will create Resource Manager stacks named:"
-        echo "  • vibestack-full"
-        echo "  • vibestack-coolify"
-        echo "  • vibestack-kasm"
+        echo "🚀 This package will create a Resource Manager stack named: vibestack-coolify"
         echo ""
-        echo "📋 Package sizes:"
-        ls -lh *.zip
+        echo "📋 Package size:"
+        ls -lh vibestack-coolify.zip
