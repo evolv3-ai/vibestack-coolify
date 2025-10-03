@@ -27,6 +27,8 @@ variableGroups:
       - coolify_memory_in_gbs
       - coolify_block_volume_size_in_gbs
       - coolify_custom_tcp_ports
+      - coolify_root_username
+      - coolify_root_user_email
       - assign_public_ip
   - title: "🌐 Cloudflare Tunnel (Optional)"
     description: "Configure secure access to Coolify through Cloudflare tunnel with automatic SSL certificates"
@@ -37,6 +39,12 @@ variableGroups:
       - cloudflare_zone_id
       - tunnel_hostname
       - ssh_hostname
+  - title: "🔒 SSL Certificate (Optional)"
+    description: "Configure SSL certificate for HTTPS access"
+    variables:
+      - enable_custom_ssl
+      - origin_certificate
+      - private_key
 
 variables:
   tenancy_ocid:
