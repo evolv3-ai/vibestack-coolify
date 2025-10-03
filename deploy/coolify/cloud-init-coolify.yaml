@@ -126,7 +126,7 @@ runcmd:
   - mkdir -p /opt/vibestack
 
   # Download the latest playbook from GitHub (with retry)
-  - timeout 60 wget -O /tmp/complete-setup.yml https://raw.githubusercontent.com/evolv3-ai/vibestack-coolifymain/coolify-complete-setup.yml || (sleep 10 && timeout 60 wget -O /tmp/complete-setup.yml https://raw.githubusercontent.com/evolv3-ai/vibestack-coolifymain/coolify-complete-setup.yml)
+  - timeout 60 wget -O /tmp/complete-setup.yml https://raw.githubusercontent.com/evolv3-ai/vibestack-coolify/main/coolify-complete-setup.yml || (sleep 10 && timeout 60 wget -O /tmp/complete-setup.yml https://raw.githubusercontent.com/evolv3-ai/vibestack-coolify/main/coolify-complete-setup.yml)
   - cp /tmp/complete-setup.yml /opt/vibestack/complete-setup.yml
 
   # Install pip and ansible with proper paths and retries
