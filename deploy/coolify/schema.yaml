@@ -1,5 +1,5 @@
 title: "Coolify Only - Self-hosted App Platform"
-description: "Deploy only Coolify server on Oracle Cloud Always Free tier (2 OCPUs, 12GB RAM, 100GB storage)"
+description: "Deploy only Coolify server on Oracle Cloud Always Free tier"
 schemaVersion: 1.1.0
 version: "20240201"
 locale: "en"
@@ -39,7 +39,7 @@ variableGroups:
       - cloudflare_zone_id
       - tunnel_hostname
       - ssh_hostname
-  - title: "🔒 SSL Certificate (Optional)"
+  - title: "🔒 Cloudflare Origin Certificate (Optional)"
     description: "Configure SSL certificate for HTTPS access"
     variables:
       - enable_custom_ssl
