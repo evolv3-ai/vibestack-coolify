@@ -1,0 +1,1113 @@
+---
+# Complete Coolify + Cloudflare Tunnel Setup Playbook
+# For OCI "Deploy to Oracle" Button Automation
+# Handles both Coolify installation and optional Cloudflare tunnel setup
+
+- name: Complete Coolify Setup with Optional Cloudflare Tunnel
+  hosts: localhost
+  become: yes
+  gather_facts: yes
+  vars:
+    # Environment file for Cloudflare variables (populated by cloud-init)
+    env_file: "/opt/vibestack/.env"
+    coolify_port: "8000"
+
+  tasks:
+    - name: System information
+      debug:
+        msg:
+          - "🚀 VibeStack Coolify Complete Setup"
+          - "📋 Host: {{ ansible_hostname }}"
+          - "🏗️ Architecture: {{ ansible_architecture }}"
+          - "💿 Distribution: {{ ansible_distribution }} {{ ansible_distribution_version }}"
+
+    # =============================================================================
+    # COOLIFY INSTALLATION (Always runs)
+    # =============================================================================
+
+    - name: Update system packages
+      apt:
+        update_cache: yes
+        upgrade: dist
+        cache_valid_time: 3600
+      register: upgrade_packages_result
+      retries: 5
+      delay: 20
+      until: upgrade_packages_result is succeeded
+
+    - name: Install required packages
+      apt:
+        name:
+          - ca-certificates
+          - curl
+          - gnupg
+          - lsb-release
+          - software-properties-common
+          - apt-transport-https
+          - git
+          - wget
+          - python3-pip
+        state: present
+      register: prerequisite_packages_result
+      retries: 5
+      delay: 20
+      until: prerequisite_packages_result is succeeded
+
+    - name: Install Docker
+      block:
+        - name: Check if Docker is installed
+          command: docker --version
+          register: docker_check
+          failed_when: false
+          changed_when: false
+
+        - name: Add Docker GPG key
+          apt_key:
+            url: https://download.docker.com/linux/ubuntu/gpg
+            state: present
+          when: docker_check.rc != 0
+
+        - name: Add Docker repository
+          apt_repository:
+            repo: "deb [arch=arm64] https://download.docker.com/linux/ubuntu {{ ansible_distribution_release }} stable"
+            state: present
+          when: docker_check.rc != 0
+
+        - name: Install Docker packages
+          apt:
+            name:
+              - docker-ce
+              - docker-ce-cli
+              - containerd.io
+              - docker-compose-plugin
+            state: present
+            update_cache: yes
+          when: docker_check.rc != 0
+          register: docker_packages_result
+          retries: 5
+          delay: 20
+          until: docker_packages_result is succeeded
+
+        - name: Start and enable Docker
+          systemd:
+            name: docker
+            state: started
+            enabled: yes
+
+    - name: Install Coolify
+      block:
+        - name: Check if Coolify is already installed
+          shell: |
+            # Check multiple indicators of a working Coolify installation
+            COOLIFY_INDICATORS=0
+
+            # 1. Check if coolify command exists and works
+            if command -v coolify >/dev/null 2>&1; then
+              echo "Found coolify command"
+              COOLIFY_INDICATORS=$((COOLIFY_INDICATORS + 1))
+            fi
+
+            # 2. Check if Coolify containers are running
+            if docker ps --format "table {{ '{{.Names}}' }}" 2>/dev/null | grep -q coolify; then
+              echo "Found running Coolify containers"
+              COOLIFY_INDICATORS=$((COOLIFY_INDICATORS + 1))
+            fi
+
+            # 3. Check if Coolify core application files exist (not just cert directories)
+            if [ -f "/data/coolify/source/.env" ] || [ -f "/data/coolify/source/bootstrap/app.php" ]; then
+              echo "Found Coolify application files"
+              COOLIFY_INDICATORS=$((COOLIFY_INDICATORS + 1))
+            fi
+
+            # 4. Check if Coolify API is responding
+            if curl -f -s -o /dev/null -w "{{ '%{http_code}' }}" http://localhost:8000 2>/dev/null | grep -q "200\|302\|401"; then
+              echo "Coolify API is responding"
+              COOLIFY_INDICATORS=$((COOLIFY_INDICATORS + 1))
+            fi
+
+            echo "Coolify installation indicators found: $COOLIFY_INDICATORS"
+
+            # Consider Coolify installed if we find 2 or more indicators
+            if [ $COOLIFY_INDICATORS -ge 2 ]; then
+              echo "Coolify appears to be properly installed"
+              exit 0
+            else
+              echo "Coolify is not properly installed (found $COOLIFY_INDICATORS/4 indicators)"
+              exit 1
+            fi
+          register: coolify_check_result
+          failed_when: false
+          changed_when: false
+
+        - name: Display Coolify installation decision
+          debug:
+            msg: |
+              Coolify installation check result: {{ 'SKIP installation (already installed)' if coolify_check_result.rc == 0 else 'PROCEED with installation (not properly installed)' }}
+              Check output: {{ coolify_check_result.stdout_lines | default(['No output']) | join(', ') }}
+
+        - name: Wait for network connectivity
+          wait_for:
+            host: 8.8.8.8
+            port: 53
+            timeout: 60
+            delay: 10
+
+        # COMMENTED OUT: Download Coolify installer
+        # NOTE: Now using direct curl in installation step with environment variables
+        #
+        # - name: Download Coolify installer
+        #   shell: |
+        #     curl -fsSL https://cdn.coollabs.io/coolify/install.sh -o /tmp/install_coolify.sh
+        #     chmod +x /tmp/install_coolify.sh
+        #   args:
+        #     creates: /tmp/install_coolify.sh
+        #   when: coolify_check_result.rc != 0
+        #   retries: 3
+        #   delay: 10
+
+        - name: Wait for any package management locks before Coolify install
+          shell: |
+            echo "Checking for package locks before Coolify installation..."
+            timeout 180 bash -c 'while lsof /var/lib/dpkg/lock-frontend >/dev/null 2>&1; do echo "Waiting for dpkg lock..."; sleep 5; done'
+            timeout 180 bash -c 'while lsof /var/lib/apt/lists/lock >/dev/null 2>&1; do echo "Waiting for apt lists lock..."; sleep 5; done'
+            timeout 180 bash -c 'while lsof /var/cache/apt/archives/lock >/dev/null 2>&1; do echo "Waiting for apt cache lock..."; sleep 5; done'
+            echo "All package locks cleared for Coolify installation"
+          when: coolify_check_result.rc != 0
+
+        - name: Run Coolify installer with retries
+          shell: |
+            # Source the Coolify root user credentials safely
+            if [ -f /opt/vibestack/coolify-root-user.env ]; then
+              # Read credentials safely line by line
+              COOLIFY_ROOT_USERNAME=$(grep "^COOLIFY_ROOT_USERNAME=" /opt/vibestack/coolify-root-user.env | cut -d'=' -f2)
+              COOLIFY_ROOT_EMAIL=$(grep "^COOLIFY_ROOT_EMAIL=" /opt/vibestack/coolify-root-user.env | cut -d'=' -f2)
+              COOLIFY_ROOT_PASSWORD=$(grep "^COOLIFY_ROOT_PASSWORD=" /opt/vibestack/coolify-root-user.env | cut -d'=' -f2)
+              echo "Coolify credentials loaded for installation"
+            fi
+
+            # Retry logic for Coolify installer with environment variables
+            for attempt in $(seq 1 3); do
+              echo "Coolify installation attempt $attempt"
+              if env ROOT_USERNAME="$COOLIFY_ROOT_USERNAME" ROOT_USER_EMAIL="$COOLIFY_ROOT_EMAIL" ROOT_USER_PASSWORD="$COOLIFY_ROOT_PASSWORD" bash -c 'curl -fsSL https://cdn.coollabs.io/coolify/install.sh | bash'; then
+                echo "Coolify installation successful"
+                exit 0
+              else
+                echo "Coolify installation attempt $attempt failed"
+                if [ $attempt -lt 3 ]; then
+                  echo "Waiting 30 seconds before retry..."
+                  sleep 30
+                  # Check for and wait for package locks to clear
+                  timeout 60 bash -c 'while lsof /var/lib/dpkg/lock-frontend >/dev/null 2>&1; do sleep 3; done' || true
+                fi
+              fi
+            done
+            echo "All Coolify installation attempts failed"
+            exit 1
+          args:
+            creates: /data/coolify
+          when: coolify_check_result.rc != 0
+          register: coolify_install_result
+          failed_when: coolify_install_result.rc != 0
+
+        - name: Wait for Coolify to start
+          wait_for:
+            port: "{{ coolify_port }}"
+            delay: 30
+            timeout: 300
+
+        - name: Set Coolify data directory permissions for ubuntu user
+          file:
+            path: /data/coolify
+            owner: ubuntu
+            group: ubuntu
+            mode: '0755'
+            recurse: yes
+          when: ansible_distribution == 'Ubuntu'
+          ignore_errors: yes  # In case the directory structure changes
+
+        - name: Ensure Coolify data directory exists
+          wait_for:
+            path: /data/coolify
+            timeout: 120
+          when: ansible_distribution == 'Ubuntu'
+
+        - name: Create SSL certificate directories with proper ownership
+          file:
+            path: "{{ item }}"
+            state: directory
+            owner: root
+            group: root
+            mode: '0755'
+          loop:
+            - /data/coolify/proxy
+            - /data/coolify/proxy/certs
+            - /data/coolify/ssl
+            - /data/coolify/custom
+          when: ansible_distribution == 'Ubuntu'
+
+        - name: Move SSL certificates from staging to Coolify location
+          block:
+            - name: Check if SSL certificates exist in staging area
+              stat:
+                path: /opt/vibestack/ssl-certs-staging
+              register: ssl_staging_dir
+
+            - name: Copy SSL certificates to Coolify proxy directory
+              shell: |
+                if [ -d "/opt/vibestack/ssl-certs-staging" ]; then
+                  echo "Moving SSL certificates from staging to Coolify location..."
+                  cp -v /opt/vibestack/ssl-certs-staging/* /data/coolify/proxy/certs/ 2>&1 || true
+                  echo "SSL certificate files copied to Coolify"
+
+                  # Update the SSL config file with correct paths
+                  if [ -f "/opt/vibestack/ssl-config.env" ]; then
+                    sed -i 's|/opt/vibestack/ssl-certs-staging|/data/coolify/proxy/certs|g' /opt/vibestack/ssl-config.env
+                    echo "SSL config file updated with Coolify paths"
+                  fi
+
+                  # Set proper permissions
+                  chmod 644 /data/coolify/proxy/certs/*.cert 2>/dev/null || true
+                  chmod 600 /data/coolify/proxy/certs/*.key 2>/dev/null || true
+
+                  echo "SSL certificate setup completed"
+                else
+                  echo "No SSL staging directory found - skipping SSL certificate setup"
+                fi
+              when: ssl_staging_dir.stat.exists
+              register: ssl_copy_result
+
+            - name: Display SSL certificate copy results
+              debug:
+                var: ssl_copy_result.stdout_lines
+              when: ssl_copy_result is defined and ssl_copy_result.stdout_lines is defined
+
+            - name: Create Traefik dynamic configuration script
+              copy:
+                dest: /opt/vibestack/create-traefik-config.sh
+                mode: '0755'
+                content: |
+                  #!/bin/bash
+                  if [ -d "/data/coolify/proxy/certs" ] && [ -f "/opt/vibestack/ssl-config.env" ]; then
+                    echo "Creating Traefik dynamic configuration for SSL certificates..."
+
+                    # Read SSL domain from config
+                    SSL_DOMAIN=$(grep "^SSL_DOMAIN=" /opt/vibestack/ssl-config.env | cut -d'=' -f2)
+
+                    # Create dynamic directory if it doesn't exist
+                    mkdir -p /data/coolify/proxy/dynamic
+
+                    # Create Traefik dynamic configuration
+                    cat > /data/coolify/proxy/dynamic/cloudflare-origin-certs.yaml << EOF
+                  tls:
+                    certificates:
+                      -
+                        certFile: /data/coolify/proxy/certs/${SSL_DOMAIN}.cert
+                        keyFile: /data/coolify/proxy/certs/${SSL_DOMAIN}.key
+                  EOF
+
+                    # Set proper permissions
+                    chmod 644 /data/coolify/proxy/dynamic/cloudflare-origin-certs.yaml
+
+                    echo "Traefik dynamic configuration created at /data/coolify/proxy/dynamic/cloudflare-origin-certs.yaml"
+                    echo "Certificate file: /data/coolify/proxy/certs/${SSL_DOMAIN}.cert"
+                    echo "Key file: /data/coolify/proxy/certs/${SSL_DOMAIN}.key"
+                  else
+                    echo "SSL certificates or configuration not found - skipping Traefik configuration"
+                  fi
+              when: ssl_staging_dir.stat.exists
+
+            - name: Execute Traefik configuration script
+              command: /opt/vibestack/create-traefik-config.sh
+              when: ssl_staging_dir.stat.exists
+              register: traefik_config_result
+
+            - name: Display Traefik configuration results
+              debug:
+                var: traefik_config_result.stdout_lines
+              when: traefik_config_result is defined and traefik_config_result.stdout_lines is defined
+
+    # =============================================================================
+    # SSL CERTIFICATE SETUP (Alternative to Cloudflare Tunnel)
+    # =============================================================================
+
+    - name: Check for SSL configuration metadata
+      stat:
+        path: /opt/vibestack/ssl-config.env
+      register: ssl_config_file
+
+    - name: Load SSL metadata
+      set_fact:
+        ssl_metadata:
+          ssl_domain: "{{ lookup('ini', 'SSL_DOMAIN section=None file=/opt/vibestack/ssl-config.env', errors='ignore') }}"
+          ssl_cert_path: "{{ lookup('ini', 'SSL_CERT_PATH section=None file=/opt/vibestack/ssl-config.env', errors='ignore') }}"
+          ssl_key_path: "{{ lookup('ini', 'SSL_KEY_PATH section=None file=/opt/vibestack/ssl-config.env', errors='ignore') }}"
+          ssl_fullchain_path: "{{ lookup('ini', 'SSL_FULLCHAIN_PATH section=None file=/opt/vibestack/ssl-config.env', errors='ignore') }}"
+      when: ssl_config_file.stat.exists
+
+    - name: Check if SSL certificate exists
+      stat:
+        path: "{{ (ssl_metadata | default({})).ssl_cert_path }}"
+      register: ssl_cert_file
+      when: (ssl_metadata | default({})).ssl_cert_path | default('') != ''
+
+    - name: Check if SSL key exists
+      stat:
+        path: "{{ (ssl_metadata | default({})).ssl_key_path }}"
+      register: ssl_key_file
+      when: (ssl_metadata | default({})).ssl_key_path | default('') != ''
+
+    - name: Deploy SSL Certificates to Coolify
+      block:
+        - name: Extract SAN from certificate
+          command: openssl x509 -in {{ (ssl_metadata | default({})).ssl_cert_path }} -noout -ext subjectAltName
+          register: ssl_san_result
+          changed_when: false
+          failed_when: false
+
+        - name: Extract subject from certificate
+          command: openssl x509 -in {{ (ssl_metadata | default({})).ssl_cert_path }} -noout -subject
+          register: ssl_subject_result
+          changed_when: false
+          failed_when: false
+
+        - name: Prepare SSL metadata values
+          set_fact:
+            ssl_metadata_domain: "{{ (ssl_metadata | default({})).ssl_domain | default('') }}"
+            ssl_cert_path: "{{ (ssl_metadata | default({})).ssl_cert_path | default('') }}"
+            ssl_key_path: "{{ (ssl_metadata | default({})).ssl_key_path | default('') }}"
+            ssl_fullchain_path: "{{ (ssl_metadata | default({})).ssl_fullchain_path | default('') }}"
+
+        - name: Determine SSL domain
+          set_fact:
+            ssl_domain: >-
+              {{
+                (ssl_metadata_domain | default('') | length > 0)
+                | ternary(
+                    ssl_metadata_domain | regex_replace('^\*\.', ''),
+                    (
+                      (ssl_san_result.stdout | default('') | regex_search('DNS:([^,\s]+)', '\1'))
+                      | default(ssl_subject_result.stdout | default('') | regex_search('CN=([^,\\/]+)', '\1'))
+                      | default(ansible_hostname ~ '.local')
+                    )
+                    | regex_replace('^\*\.', '')
+                  )
+              }}
+
+        - name: Ensure SSL certificate permissions
+          file:
+            path: "{{ ssl_cert_path }}"
+            mode: '0644'
+            owner: root
+            group: root
+          when: ssl_cert_path | default('') | length > 0
+
+        - name: Ensure SSL private key permissions
+          file:
+            path: "{{ ssl_key_path }}"
+            mode: '0600'
+            owner: root
+            group: root
+          when: ssl_key_path | default('') | length > 0
+
+        - name: Detect auto-generated fullchain certificate
+          stat:
+            path: "/data/coolify/proxy/certs/{{ ssl_domain }}-fullchain.cert"
+          register: ssl_auto_fullchain
+          when: ssl_fullchain_path | length == 0
+
+        - name: Record detected fullchain certificate path
+          set_fact:
+            ssl_fullchain_path: "/data/coolify/proxy/certs/{{ ssl_domain }}-fullchain.cert"
+          when: ssl_fullchain_path | length == 0 and ssl_auto_fullchain.stat.exists
+
+        - name: Check SSL fullchain exists
+          stat:
+            path: "{{ ssl_fullchain_path }}"
+          register: ssl_fullchain_file
+          when: ssl_fullchain_path | length > 0
+
+        - name: Ensure SSL fullchain permissions
+          file:
+            path: "{{ ssl_fullchain_path }}"
+            mode: '0644'
+            owner: root
+            group: root
+          when: ssl_fullchain_path | length > 0 and ssl_fullchain_file.stat.exists | default(false)
+
+        - name: Remove staged SSL files in /opt
+          file:
+            path: "{{ item }}"
+            state: absent
+          loop:
+            - /opt/vibestack/ssl.cert
+            - /opt/vibestack/ssl.key
+            - /opt/vibestack/ssl-chain.cert
+            - /opt/vibestack/ssl-cert.b64
+            - /opt/vibestack/ssl-key.b64
+            - /opt/vibestack/ssl-chain.b64
+
+        - name: Restart Coolify to apply SSL certificates
+          shell: docker restart coolify 2>/dev/null || true
+          changed_when: false
+
+        - name: Check if Traefik needs configuration
+          shell: docker ps --filter "name=coolify-proxy" --format "{{ '{{.Names}}' }}" | grep -q coolify-proxy
+          register: has_traefik
+          failed_when: false
+          changed_when: false
+
+        - name: Configure Traefik for SSL (if present)
+          shell: |
+            if docker ps | grep -q coolify-proxy; then
+              echo "Traefik detected, SSL will be configured automatically"
+              # Traefik automatically picks up certificates from /data/coolify/proxy/certs
+            fi
+          when: has_traefik.rc == 0
+
+      when:
+        - (ssl_metadata | default({})).ssl_cert_path | default('') != ''
+        - ssl_cert_file.stat.exists | default(false)
+        - ssl_key_file.stat.exists | default(false)
+
+    # =============================================================================
+    # CLOUDFLARE TUNNEL SETUP (Conditional - only if credentials provided)
+    # =============================================================================
+
+    - name: Check if Cloudflare configuration exists
+      stat:
+        path: "{{ env_file }}"
+      register: env_file_stat
+
+    - name: Load Cloudflare configuration
+      block:
+        - name: Read environment file
+          slurp:
+            src: "{{ env_file }}"
+          register: env_content
+          when: env_file_stat.stat.exists
+
+        - name: Parse environment variables
+          set_fact:
+            env_lines: "{{ (env_content.content | b64decode).split('\n') | select('match', '^[A-Z]') | list }}"
+          when: env_file_stat.stat.exists and env_content is defined
+
+        - name: Set Cloudflare configuration variables
+          set_fact:
+            cloudflare_config:
+              CLOUDFLARE_API_TOKEN: "{{ env_lines | select('match', '^CLOUDFLARE_API_TOKEN=') | map('regex_replace', '^CLOUDFLARE_API_TOKEN=(.+)$', '\\1') | first | default('') }}"
+              CLOUDFLARE_ACCOUNT_ID: "{{ env_lines | select('match', '^CLOUDFLARE_ACCOUNT_ID=') | map('regex_replace', '^CLOUDFLARE_ACCOUNT_ID=(.+)$', '\\1') | first | default('') }}"
+              CLOUDFLARE_ZONE_ID: "{{ env_lines | select('match', '^CLOUDFLARE_ZONE_ID=') | map('regex_replace', '^CLOUDFLARE_ZONE_ID=(.+)$', '\\1') | first | default('') }}"
+              TUNNEL_HOSTNAME: "{{ env_lines | select('match', '^TUNNEL_HOSTNAME=') | map('regex_replace', '^TUNNEL_HOSTNAME=(.+)$', '\\1') | first | default('') }}"
+              SSH_HOSTNAME: "{{ env_lines | select('match', '^SSH_HOSTNAME=') | map('regex_replace', '^SSH_HOSTNAME=(.+)$', '\\1') | first | default('') }}"
+              TUNNEL_NAME: "{{ env_lines | select('match', '^TUNNEL_NAME=') | map('regex_replace', '^TUNNEL_NAME=(.+)$', '\\1') | first | default('') }}"
+          when: env_file_stat.stat.exists and env_content is defined and env_lines is defined
+
+        - name: Check if Cloudflare tunnel should be set up
+          set_fact:
+            setup_tunnel: "{{ (cloudflare_config.CLOUDFLARE_API_TOKEN | default('')) != '' and (cloudflare_config.TUNNEL_HOSTNAME | default('')) != '' }}"
+          when: cloudflare_config is defined
+
+        - name: Display Cloudflare tunnel status
+          debug:
+            msg:
+              - "🌐 Cloudflare Tunnel Configuration:"
+              - "   Setup Tunnel: {{ setup_tunnel | default('false') }}"
+              - "   Hostname: {{ cloudflare_config.TUNNEL_HOSTNAME | default('Not configured') }}"
+              - "   API Token: {{ 'Configured' if (cloudflare_config.CLOUDFLARE_API_TOKEN | default('')) != '' else 'Not configured' }}"
+          when: cloudflare_config is defined
+
+    - name: Setup Cloudflare Tunnel
+      block:
+        - name: Install cloudflared
+          shell: |
+            curl -L --output /tmp/cloudflared.deb https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-arm64.deb
+            dpkg -i /tmp/cloudflared.deb || apt-get install -f -y
+          args:
+            creates: /usr/bin/cloudflared
+
+        - name: Generate unique tunnel name
+          set_fact:
+            tunnel_name: "{{ cloudflare_config.TUNNEL_NAME | default('vibestack-' + ansible_hostname + '-' + ansible_date_time.epoch) }}"
+
+        - name: Create Cloudflare tunnel
+          uri:
+            url: "https://api.cloudflare.com/client/v4/accounts/{{ cloudflare_config.CLOUDFLARE_ACCOUNT_ID }}/cfd_tunnel"
+            method: POST
+            headers:
+              Authorization: "Bearer {{ cloudflare_config.CLOUDFLARE_API_TOKEN }}"
+              Content-Type: "application/json"
+            body_format: json
+            body:
+              name: "{{ tunnel_name }}"
+              config_src: "cloudflare"
+            return_content: yes
+          register: tunnel_result
+          failed_when: false
+
+        - name: Extract tunnel information
+          set_fact:
+            tunnel_id: "{{ tunnel_result.json.result.id | default('') }}"
+            tunnel_secret: "{{ tunnel_result.json.result.credentials_file.TunnelSecret | default('') }}"
+          when: tunnel_result.json is defined and tunnel_result.json.success | default(false)
+
+        - name: Get tunnel token
+          uri:
+            url: "https://api.cloudflare.com/client/v4/accounts/{{ cloudflare_config.CLOUDFLARE_ACCOUNT_ID }}/cfd_tunnel/{{ tunnel_id }}/token"
+            method: GET
+            headers:
+              Authorization: "Bearer {{ cloudflare_config.CLOUDFLARE_API_TOKEN }}"
+              Content-Type: "application/json"
+            return_content: yes
+          register: tunnel_token_result
+          when: tunnel_id is defined and tunnel_id != ""
+
+        - name: Extract tunnel token
+          set_fact:
+            tunnel_token: "{{ tunnel_token_result.json.result | default('') }}"
+          when: tunnel_token_result.json is defined and tunnel_token_result.json.success | default(false)
+
+        - name: Handle tunnel creation failure
+          block:
+            - name: Check for existing tunnel
+              uri:
+                url: "https://api.cloudflare.com/client/v4/accounts/{{ cloudflare_config.CLOUDFLARE_ACCOUNT_ID }}/cfd_tunnel"
+                method: GET
+                headers:
+                  Authorization: "Bearer {{ cloudflare_config.CLOUDFLARE_API_TOKEN }}"
+                return_content: yes
+              register: existing_tunnels
+
+            - name: Find existing tunnel
+              set_fact:
+                tunnel_id: "{{ item.id }}"
+              loop: "{{ existing_tunnels.json.result | default([]) }}"
+              when: item.name == tunnel_name
+
+            - name: Fail if no tunnel available
+              fail:
+                msg: "Could not create or find Cloudflare tunnel"
+              when: tunnel_id is not defined or tunnel_id == ''
+          when: tunnel_id is not defined or tunnel_id == ''
+
+        - name: Load existing tunnel credentials if secret is missing
+          block:
+            - name: Check for existing credential file
+              stat:
+                path: "/etc/cloudflared/{{ tunnel_id }}.json"
+              register: existing_credential_file
+
+            - name: Read existing credential file
+              slurp:
+                src: "/etc/cloudflared/{{ tunnel_id }}.json"
+              register: existing_credential_content
+              when: existing_credential_file.stat.exists
+
+            - name: Parse existing credential file
+              set_fact:
+                tunnel_secret: "{{ (existing_credential_content.content | b64decode | from_json).TunnelSecret | default('') }}"
+                cloudflare_account_tag: "{{ (existing_credential_content.content | b64decode | from_json).AccountTag | default('') }}"
+              when: existing_credential_file.stat.exists
+
+            - name: Merge account tag from credentials
+              set_fact:
+                cloudflare_config: "{{ cloudflare_config | combine({'CLOUDFLARE_ACCOUNT_ID': cloudflare_account_tag}) }}"
+              when: existing_credential_file.stat.exists and cloudflare_account_tag | default('') != ''
+
+          when: (tunnel_secret | default('')) == '' and (tunnel_id | default('')) != ''
+
+        - name: Abort when tunnel credentials remain unavailable
+          fail:
+            msg: "Cloudflare tunnel credentials missing; delete the tunnel or provide new credentials."
+          when: (tunnel_secret | default('')) == ''
+
+        - name: Get tunnel token (for existing tunnels or if missing)
+          uri:
+            url: "https://api.cloudflare.com/client/v4/accounts/{{ cloudflare_config.CLOUDFLARE_ACCOUNT_ID }}/cfd_tunnel/{{ tunnel_id }}/token"
+            method: GET
+            headers:
+              Authorization: "Bearer {{ cloudflare_config.CLOUDFLARE_API_TOKEN }}"
+              Content-Type: "application/json"
+            return_content: yes
+          register: tunnel_token_result_final
+          when: (tunnel_token | default('')) == '' and tunnel_id is defined and tunnel_id != ""
+
+        - name: Extract tunnel token (final)
+          set_fact:
+            tunnel_token: "{{ tunnel_token_result_final.json.result | default('') }}"
+          when: tunnel_token_result_final.json is defined and tunnel_token_result_final.json.success | default(false)
+
+        - name: Create cloudflared directory
+          file:
+            path: /etc/cloudflared
+            state: directory
+            mode: '0755'
+            owner: root
+            group: root
+
+        - name: Create tunnel credentials file
+          copy:
+            content: |
+              {
+                "AccountTag": "{{ cloudflare_config.CLOUDFLARE_ACCOUNT_ID }}",
+                "TunnelSecret": "{{ tunnel_secret }}",
+                "TunnelID": "{{ tunnel_id }}"
+              }
+            dest: "/etc/cloudflared/{{ tunnel_id }}.json"
+            mode: '0600'
+            owner: root
+            group: root
+          when: tunnel_secret is defined and tunnel_secret != ''
+
+        - name: Check if Traefik proxy is running (for Full TLS)
+          shell: docker ps --filter "name=coolify-proxy" --format "table {{ '{{.Names}}' }}\t{{ '{{.Ports}}' }}" | grep -q "0.0.0.0:443"
+          register: traefik_running
+          failed_when: false
+          changed_when: false
+
+        - name: Set tunnel service endpoint
+          set_fact:
+            tunnel_service: "{{ 'https://localhost:443' if traefik_running.rc == 0 else 'http://localhost:' + coolify_port }}"
+            needs_tls_verify_skip: "{{ traefik_running.rc == 0 }}"
+
+        - name: Extract base domain for wildcard routing
+          set_fact:
+            base_domain: "{{ cloudflare_config.TUNNEL_HOSTNAME.split('.')[1:] | join('.') }}"
+
+        - name: Create tunnel configuration
+          copy:
+            content: |
+              tunnel: {{ tunnel_id }}
+              credentials-file: /etc/cloudflared/{{ tunnel_id }}.json
+
+              ingress:
+                - hostname: "*.{{ base_domain }}"
+                  service: {{ tunnel_service }}
+                  path: "*"
+                  originRequest:
+                    noTLSVerify: {{ needs_tls_verify_skip }}
+                    connectTimeout: 30s
+                    tlsTimeout: 30s
+                    tcpKeepAlive: 30s
+                    keepAliveConnections: 10
+                    keepAliveTimeout: 90s
+                    originServerName: {{ base_domain }}
+                - service: http_status:404
+            dest: /etc/cloudflared/config.yml
+            mode: '0644'
+            owner: root
+            group: root
+
+        - name: Configure tunnel remote settings (for Full TLS with wildcard routing)
+          uri:
+            url: "https://api.cloudflare.com/client/v4/accounts/{{ cloudflare_config.CLOUDFLARE_ACCOUNT_ID }}/cfd_tunnel/{{ tunnel_id }}/configurations"
+            method: PUT
+            headers:
+              Authorization: "Bearer {{ cloudflare_config.CLOUDFLARE_API_TOKEN }}"
+              Content-Type: "application/json"
+            body_format: json
+            body:
+              config:
+                ingress:
+                  - hostname: "*.{{ base_domain }}"
+                    service: "{{ tunnel_service }}"
+                    originRequest:
+                      noTLSVerify: "{{ needs_tls_verify_skip }}"
+                  - service: "http_status:404"
+            return_content: yes
+          register: remote_config_result
+          when: tunnel_id is defined and tunnel_id != ''
+
+        - name: Create wildcard DNS record
+          uri:
+            url: "https://api.cloudflare.com/client/v4/zones/{{ cloudflare_config.CLOUDFLARE_ZONE_ID }}/dns_records"
+            method: POST
+            headers:
+              Authorization: "Bearer {{ cloudflare_config.CLOUDFLARE_API_TOKEN }}"
+              Content-Type: "application/json"
+            body_format: json
+            body:
+              type: "CNAME"
+              name: "*.{{ base_domain }}"
+              content: "{{ tunnel_id }}.cfargotunnel.com"
+              proxied: true
+              ttl: 1
+            return_content: yes
+          failed_when: false  # DNS record might already exist
+          when:
+            - cloudflare_config.CLOUDFLARE_ZONE_ID | default('') != ''
+            - base_domain | default('') != ''
+
+        - name: Create systemd service for cloudflared
+          copy:
+            content: |
+              [Unit]
+              Description=Cloudflare Tunnel for VibeStack Coolify
+              After=network.target
+
+              [Service]
+              Type=simple
+              User=root
+              ExecStart=/usr/bin/cloudflared tunnel --config /etc/cloudflared/config.yml run
+              Restart=always
+              RestartSec=5
+              StandardOutput=journal
+              StandardError=journal
+
+              [Install]
+              WantedBy=multi-user.target
+            dest: /etc/systemd/system/cloudflared-vibestack.service
+            mode: '0644'
+            owner: root
+            group: root
+
+        - name: Enable and start cloudflared service
+          systemd:
+            name: cloudflared-vibestack
+            state: started
+            enabled: yes
+            daemon_reload: yes
+
+        - name: Save tunnel information
+          copy:
+            content: |
+              # VibeStack Cloudflare Tunnel Information
+              # Generated: {{ ansible_date_time.iso8601 }}
+
+              TUNNEL_ID={{ tunnel_id }}
+              TUNNEL_NAME={{ tunnel_name }}
+              TUNNEL_TOKEN={{ tunnel_token }}
+              TUNNEL_HOSTNAME={{ cloudflare_config.TUNNEL_HOSTNAME }}
+              SSH_HOSTNAME={{ cloudflare_config.SSH_HOSTNAME | default('ssh.' + (cloudflare_config.TUNNEL_HOSTNAME.split('.')[1:] | join('.'))) }}
+
+              # Service Management Commands:
+              # sudo systemctl status cloudflared-vibestack
+              # sudo systemctl restart cloudflared-vibestack
+              # sudo journalctl -u cloudflared-vibestack -f
+            dest: /opt/vibestack/tunnel-info.txt
+            mode: '0644'
+
+      when: setup_tunnel | default(false)
+
+    # =============================================================================
+    # FINAL SETUP AND INFORMATION
+    # =============================================================================
+
+    - name: Get public IP address
+      uri:
+        url: http://ifconfig.me/ip
+        method: GET
+        return_content: yes
+        timeout: 10
+      register: public_ip
+      ignore_errors: yes
+
+    - name: Create success information file
+      copy:
+        content: |
+          # VibeStack Coolify Deployment Success!
+          # Generated: {{ ansible_date_time.iso8601 }}
+
+          ## Access Information
+          {% if setup_tunnel | default(false) %}
+          🌐 Coolify URL: http://{{ public_ip.content | trim if public_ip.content is defined else ansible_default_ipv4.address }}:{{ coolify_port }}
+          🔐 SSH Access: {{ public_ip.content | trim if public_ip.content is defined else ansible_default_ipv4.address }}:22
+          🔑 Login Credentials: cat /opt/vibestack/coolify-root-user.env
+          {% else %}
+          🌐 Coolify URL: http://{{ public_ip.content | trim if public_ip.content is defined else ansible_default_ipv4.address }}:{{ coolify_port }}
+          🔐 SSH Access: {{ public_ip.content | trim if public_ip.content is defined else ansible_default_ipv4.address }}:22
+          🔑 Login Credentials: cat /opt/vibestack/coolify-root-user.env
+          {% endif %}
+
+          ## Service Status
+          ✅ Coolify: Running on port {{ coolify_port }}
+          ✅ Docker: Installed and running
+          {% if setup_tunnel | default(false) %}
+          ✅ Cloudflare Tunnel: Configured and running
+          {% endif %}
+
+          ## Management Commands
+          # Check Coolify status
+          sudo docker ps | grep coolify
+
+          # Coolify logs
+          sudo docker logs coolify
+
+          {% if setup_tunnel | default(false) %}
+          # Tunnel status
+          sudo systemctl status cloudflared-vibestack
+
+          # Tunnel logs
+          sudo journalctl -u cloudflared-vibestack -f
+          {% endif %}
+
+          ## Next Steps
+          {% if setup_tunnel | default(false) %}
+          1. Access Coolify at http://{{ public_ip.content | trim if public_ip.content is defined else ansible_default_ipv4.address }}:{{ coolify_port }}
+          2. Login using credentials from: /opt/vibestack/coolify-root-user.env
+          3. Complete the initial setup wizard
+          4. Verify Cloudflare tunnel is working
+          5. Once tunnel is active, access via: https://{{ cloudflare_config.TUNNEL_HOSTNAME }}
+          6. Add your Git repositories and start deploying applications
+          {% else %}
+          1. Access Coolify at http://{{ public_ip.content | trim if public_ip.content is defined else ansible_default_ipv4.address }}:{{ coolify_port }}
+          2. Login using credentials from: /opt/vibestack/coolify-root-user.env
+          3. Complete the initial setup wizard
+          4. Setup Cloudflare tunnel in Coolify for HTTPS access
+          5. Add your Git repositories and start deploying applications
+          {% endif %}
+        dest: /opt/vibestack/deployment-success.txt
+        mode: '0644'
+
+    # =============================================================================
+    # COOLIFY ROOT USER CONFIGURATION
+    # =============================================================================
+
+    # COMMENTED OUT: Configure Coolify root user credentials
+    # NOTE: Credentials are now set during installation via environment variables
+    # Keeping this code for potential database modifications later
+    #
+    # - name: Configure Coolify root user credentials
+    #   block:
+    #     - name: Check for Coolify root user configuration
+    #       stat:
+    #         path: /opt/vibestack/coolify-root-user.env
+    #       register: coolify_root_config
+    #
+    #     - name: Load Coolify root user credentials
+    #       shell: |
+    #         if [ -f /opt/vibestack/coolify-root-user.env ]; then
+    #           source /opt/vibestack/coolify-root-user.env
+    #           echo "ROOT_USERNAME=$COOLIFY_ROOT_USERNAME"
+    #           echo "ROOT_EMAIL=$COOLIFY_ROOT_EMAIL"
+    #           echo "ROOT_PASSWORD=$COOLIFY_ROOT_PASSWORD"
+    #         fi
+    #       register: coolify_credentials
+    #       when: coolify_root_config.stat.exists
+    #
+    #     - name: Backup existing Coolify .env file
+    #       shell: |
+    #         if [ -f /data/coolify/source/.env ]; then
+    #           cp /data/coolify/source/.env /opt/vibestack/coolify.env.backup.$(date +%Y%m%d_%H%M%S)
+    #           echo "Backup created"
+    #         else
+    #           echo "No .env file to backup"
+    #         fi
+    #       when: coolify_root_config.stat.exists
+    #
+    #     - name: Update Coolify root user credentials in .env
+    #       shell: |
+    #         if [ -f /data/coolify/source/.env ] && [ -f /opt/vibestack/coolify-root-user.env ]; then
+    #           # Source the credentials
+    #           source /opt/vibestack/coolify-root-user.env
+    #
+    #           # Update or add ROOT_USERNAME
+    #           if grep -q "^ROOT_USERNAME=" /data/coolify/source/.env; then
+    #             sed -i "s|^ROOT_USERNAME=.*|ROOT_USERNAME=$COOLIFY_ROOT_USERNAME|" /data/coolify/source/.env
+    #           else
+    #             echo "ROOT_USERNAME=$COOLIFY_ROOT_USERNAME" >> /data/coolify/source/.env
+    #           fi
+    #
+    #           # Update or add ROOT_USER_EMAIL
+    #           if grep -q "^ROOT_USER_EMAIL=" /data/coolify/source/.env; then
+    #             sed -i "s|^ROOT_USER_EMAIL=.*|ROOT_USER_EMAIL=$COOLIFY_ROOT_EMAIL|" /data/coolify/source/.env
+    #           else
+    #             echo "ROOT_USER_EMAIL=$COOLIFY_ROOT_EMAIL" >> /data/coolify/source/.env
+    #           fi
+    #
+    #           # Update or add ROOT_USER_PASSWORD (using printf to handle special characters safely)
+    #           if grep -q "^ROOT_USER_PASSWORD=" /data/coolify/source/.env; then
+    #             # Remove existing line and add new one to avoid sed special character issues
+    #             grep -v "^ROOT_USER_PASSWORD=" /data/coolify/source/.env > /tmp/coolify_env_temp
+    #             printf "ROOT_USER_PASSWORD=%s\n" "$COOLIFY_ROOT_PASSWORD" >> /tmp/coolify_env_temp
+    #             mv /tmp/coolify_env_temp /data/coolify/source/.env
+    #           else
+    #             printf "ROOT_USER_PASSWORD=%s\n" "$COOLIFY_ROOT_PASSWORD" >> /data/coolify/source/.env
+    #           fi
+    #
+    #           echo "Coolify root user credentials updated"
+    #         else
+    #           echo "Missing required files for credential update"
+    #         fi
+    #       when: coolify_root_config.stat.exists
+    #       register: update_credentials_result
+    #
+    #     - name: Restart Coolify container to apply new credentials
+    #       shell: |
+    #         docker restart coolify
+    #         sleep 10  # Wait for container to restart
+    #         echo "Coolify restarted with new credentials"
+    #       when: coolify_root_config.stat.exists and update_credentials_result.changed
+    #
+    #     - name: Save Coolify access credentials
+    #       copy:
+    #         content: |
+    #           # Coolify Admin Access Credentials
+    #           # Generated: {{ ansible_date_time.iso8601 }}
+    #
+    #           Username: {{ coolify_credentials.stdout_lines[0].split('=')[1] | default('admin') }}
+    #           Email: {{ coolify_credentials.stdout_lines[1].split('=')[1] | default('') }}
+    #           Password: {{ coolify_credentials.stdout_lines[2].split('=')[1] | default('') }}
+    #
+    #           Note: Keep these credentials secure. They provide admin access to your Coolify instance.
+    #         dest: /opt/vibestack/coolify-credentials.txt
+    #         mode: '0600'
+    #         owner: root
+    #         group: root
+    #       when: coolify_root_config.stat.exists
+
+    # Save Coolify access credentials (simplified version)
+    - name: Save Coolify access credentials to file
+      shell: |
+        if [ -f /opt/vibestack/coolify-root-user.env ]; then
+          # Read credentials safely using grep/cut
+          COOLIFY_ROOT_USERNAME=$(grep "^COOLIFY_ROOT_USERNAME=" /opt/vibestack/coolify-root-user.env | cut -d'=' -f2)
+          COOLIFY_ROOT_EMAIL=$(grep "^COOLIFY_ROOT_EMAIL=" /opt/vibestack/coolify-root-user.env | cut -d'=' -f2)
+          COOLIFY_ROOT_PASSWORD=$(grep "^COOLIFY_ROOT_PASSWORD=" /opt/vibestack/coolify-root-user.env | cut -d'=' -f2)
+
+          {
+            echo "# Coolify Admin Access Credentials"
+            echo "# Generated: $(date -Iseconds)"
+            echo "# Credentials set during installation via environment variables"
+            echo ""
+            echo "Username: $COOLIFY_ROOT_USERNAME"
+            echo "Email: $COOLIFY_ROOT_EMAIL"
+            echo "Password: $COOLIFY_ROOT_PASSWORD"
+            echo ""
+            echo "Note: Keep these credentials secure. They provide admin access to your Coolify instance."
+          } > /opt/vibestack/coolify-credentials.txt
+          chmod 600 /opt/vibestack/coolify-credentials.txt
+          echo "Credentials saved to coolify-credentials.txt"
+        fi
+
+    # =============================================================================
+    # COOLIFY DATABASE CONFIGURATION (Automated Domain Settings)
+    # =============================================================================
+
+    - name: Configure Coolify domain settings in database
+      block:
+        - name: Wait for Coolify database to be ready
+          wait_for:
+            port: 5432
+            host: 127.0.0.1
+            delay: 15
+            timeout: 120
+          ignore_errors: yes
+
+        - name: Check if Coolify database container is running
+          shell: 'docker ps --filter "name=coolify-db" --format "{%raw%}{{.Names}}{%endraw%}"'
+          register: coolify_db_status
+          failed_when: false
+
+        - name: Extract Coolify database password
+          shell: >
+            if docker exec coolify test -f /var/www/html/.env 2>/dev/null; then
+            docker exec coolify grep "^DB_PASSWORD=" /var/www/html/.env | cut -d'=' -f2- | tr -d '"' | tr -d "'";
+            else echo "Database password not found" && exit 1; fi
+          register: db_password_result
+          when: coolify_db_status.stdout == "coolify-db"
+
+        - name: Configure Coolify instance domain and wildcard settings
+          shell: |
+            # Extract domain values from Cloudflare config
+            TUNNEL_HOSTNAME="{{ cloudflare_config.TUNNEL_HOSTNAME | default('coolify.example.com') }}"
+            INSTANCE_DOMAIN="https://${TUNNEL_HOSTNAME}"
+            BASE_DOMAIN=$(echo "${TUNNEL_HOSTNAME}" | sed 's/^[^.]*\.//')
+            WILDCARD_DOMAIN="https://${BASE_DOMAIN}"
+
+            echo "Setting Instance Domain: $INSTANCE_DOMAIN"
+            echo "Setting Wildcard Domain: $WILDCARD_DOMAIN"
+
+            # Set environment variable for database access
+            export PGPASSWORD="{{ db_password_result.stdout }}"
+
+            # Update instance domain setting
+            docker exec coolify-db psql -U coolify -d coolify -c "UPDATE instance_settings SET fqdn = '$INSTANCE_DOMAIN', updated_at = CURRENT_TIMESTAMP WHERE id = 0;"
+
+            # Update wildcard domain setting
+            docker exec coolify-db psql -U coolify -d coolify -c "UPDATE server_settings SET wildcard_domain = '$WILDCARD_DOMAIN', updated_at = CURRENT_TIMESTAMP WHERE server_id = 0;"
+
+            # Verify the changes
+            docker exec coolify-db psql -U coolify -d coolify -c "SELECT 'Instance Domain' as setting, fqdn as value FROM instance_settings WHERE id = 0 UNION ALL SELECT 'Wildcard Domain' as setting, wildcard_domain as value FROM server_settings WHERE server_id = 0;"
+
+            echo "Domain settings updated successfully"
+          when:
+            - coolify_db_status.stdout == "coolify-db"
+            - db_password_result is succeeded
+            - cloudflare_config is defined
+            - cloudflare_config.TUNNEL_HOSTNAME is defined
+          register: sql_update_result
+
+        - name: Display domain configuration results
+          debug:
+            msg:
+              - "🔧 Coolify Domain Configuration:"
+              - "   Instance Domain: https://{{ cloudflare_config.TUNNEL_HOSTNAME | default('not configured') }}"
+              - "   Wildcard Domain: https://{{ cloudflare_config.TUNNEL_HOSTNAME | default('example.com') | regex_replace('^[^.]+\\.', '') }}"
+              - "   Database Update: {{ 'Success' if sql_update_result is succeeded else 'Skipped (no Cloudflare config)' }}"
+          when: sql_update_result is defined
+
+        - name: Restart Coolify to apply domain changes
+          shell: |
+            docker restart coolify
+            sleep 10  # Wait for container to restart
+            echo "Coolify restarted with new domain configuration"
+          when: sql_update_result is succeeded and sql_update_result.changed
+          ignore_errors: yes
+
+      when:
+        - setup_tunnel | default(false)
+        - cloudflare_config is defined
+      ignore_errors: yes  # Don't fail the playbook if SQL updates fail
+
+    - name: Display final setup information
+      block:
+        - name: Load saved credentials
+          shell: |
+            if [ -f /opt/vibestack/coolify-root-user.env ]; then
+              grep "^COOLIFY_ROOT_USERNAME=" /opt/vibestack/coolify-root-user.env | cut -d'=' -f2
+              grep "^COOLIFY_ROOT_EMAIL=" /opt/vibestack/coolify-root-user.env | cut -d'=' -f2
+              grep "^COOLIFY_ROOT_PASSWORD=" /opt/vibestack/coolify-root-user.env | cut -d'=' -f2
+            else
+              echo "admin"
+              echo "admin@example.com"
+              echo "password"
+            fi
+          register: saved_credentials
+          ignore_errors: yes
+
+        - name: Show deployment instructions
+          debug:
+            msg:
+              - "🎉 VibeStack Coolify Setup Complete!"
+              - ""
+              - "📊 Deployment Summary:"
+              - "   ✅ Coolify: Installed and running"
+              - "   ✅ Docker: Configured"
+              - "   ✅ Database configured with domains"
+              - "{% if setup_tunnel | default(false) %}   ✅ Cloudflare Tunnel: Active{% else %}   ⚠️ Cloudflare Tunnel: Not configured{% endif %}"
+              - ""
+              - "🔐 DEPLOYMENT INSTRUCTIONS:"
+              - "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+              - ""
+              - "1️⃣  Login to Coolify Admin Panel:"
+              - "   URL: http://{{ public_ip.content | trim if public_ip.content is defined else ansible_default_ipv4.address }}:{{ coolify_port }}"
+              - "   Username: {{ saved_credentials.stdout_lines[0] | default('admin') }}"
+              - "   Password: {{ saved_credentials.stdout_lines[2] | default('check /opt/vibestack/coolify-root-user.env') }}"
+              - ""
+              - "2️⃣  Create Cloudflare Tunnel Service in Coolify:"
+              - "   • Go to Services → Add Service → Docker Compose"
+              - "   • Use cloudflared image"
+              - "   • Add environment variable:"
+              - ""
+              - "3️⃣  Paste this Cloudflare Tunnel Token:"
+              - "   🔑 TOKEN: {{ tunnel_token | default('Token not available - check /opt/vibestack/tunnel-info.txt') }}"
+              - ""
+              - "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+              - ""
+              - "🌐 After Cloudflare service is running:"
+              - "   Primary: https://{{ cloudflare_config.TUNNEL_HOSTNAME | default('coolify.example.com') }}"
+              - "   Wildcard: https://{{ cloudflare_config.TUNNEL_HOSTNAME | default('example.com') | regex_replace('^[^.]+\\.', '') }}"
+              - ""
+              - "📄 All credentials saved to: /opt/vibestack/"
+              - ""
+              - "🚀 Ready to deploy applications with Coolify!"
