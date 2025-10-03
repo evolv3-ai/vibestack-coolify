@@ -6,7 +6,7 @@ Deploy Coolify on Oracle Cloud Infrastructure using only Always Free tier resour
 |---|---|
 | Deploy Coolify using half of your Always Free allocation. <br/><br/> **Coolify**: Self-hosted app platform (like Vercel/Netlify) <br/> • 2 OCPUs, 12GB RAM, 100GB storage <br/> • Perfect for developers wanting their own PaaS | **COMING SOON!** <br/><br/> • **VibeStack KASM**: Remote workspace server <br/> • **VibeStack Full**: Complete deployment with both servers <br/> • Additional deployment options |
 | **VibeStack Coolify:**
- [![Deploy to Oracle Cloud](https://oci-resourcemanager-plugin.plugins.oci.oraclecloud.com/latest/deploy-to-oracle-cloud.svg)](https://cloud.oracle.com/resourcemanager/stacks/create?zipUrl=https://github.com/your-org/vibestack-coolify/releases/latest/download/vibestack-coolify.zip) | **Stay tuned for more deployment options!** |
+ [![Deploy to Oracle Cloud](https://oci-resourcemanager-plugin.plugins.oci.oraclecloud.com/latest/deploy-to-oracle-cloud.svg)](https://cloud.oracle.com/resourcemanager/stacks/create?zipUrl=https://github.com/evolv3-ai/vibestack-coolify/releases/latest/download/vibestack-coolify.zip) | **Stay tuned for more deployment options!** |
 
 ```text
 vibestack-coolify
