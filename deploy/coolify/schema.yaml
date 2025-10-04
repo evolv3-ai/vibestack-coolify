@@ -248,5 +248,4 @@ outputs:
     title: "Coolify server"
   security_list_ingress_ports:
     title: "Open TCP ports"
-  deployment_instructions:
   
