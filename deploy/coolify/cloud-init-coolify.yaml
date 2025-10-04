@@ -69,6 +69,8 @@ write_files:
           exit_code=$?
           if [ $exit_code -eq 0 ]; then
             echo "Ansible playbook completed successfully at $(date)" | tee -a "$LOG_FILE"
+            # Create completion marker for Terraform to detect
+            touch /var/log/ansible-complete.marker
           else
             echo "Ansible playbook failed with exit code $exit_code at $(date)" | tee -a "$LOG_FILE"
           fi
@@ -337,14 +339,12 @@ runcmd:
   - ln -sf /opt/vibestack/run-ansible.sh /opt/vibestack/run-setup.sh
 
 %{ else ~}
-  # Final check: ensure no package management processes are running before Ansible
+  # Final check and Ansible execution in ONE runcmd block (forces cloud-init to wait)
   - |
     echo "Final package management check before Ansible..." >> /var/log/vibestack-setup.log
     timeout 120 bash -c 'while sudo lsof /var/lib/dpkg/lock-frontend >/dev/null 2>&1; do echo "Waiting for final dpkg lock clear..." >> /var/log/vibestack-setup.log; sleep 3; done'
     echo "All package locks cleared, starting Ansible..." >> /var/log/vibestack-setup.log
 
-  # Run Ansible directly (cloud-init waits for runcmd to complete)
-  - |
     echo "Starting Ansible execution at $(date)" >> /var/log/vibestack-setup.log
     if /opt/vibestack/run-ansible.sh; then
       echo "Ansible execution completed successfully at $(date)" >> /var/log/vibestack-setup.log
@@ -352,11 +352,9 @@ runcmd:
       EXIT_CODE=$?
       echo "Ansible execution failed with exit code $EXIT_CODE at $(date)" >> /var/log/vibestack-setup.log
       echo "Check /var/log/ansible-setup.log for details" >> /var/log/vibestack-setup.log
-      # Continue anyway - partial setup might be recoverable
     fi
-%{ endif ~}
 
-  # Log completion
-  - echo "VibeStack Coolify setup completed at $(date)" >> /var/log/vibestack-setup.log
+    echo "VibeStack Coolify setup completed at $(date)" >> /var/log/vibestack-setup.log
+%{ endif ~}
 
 final_message: "VibeStack Coolify setup completed. Check /var/log/vibestack-setup.log for details."
