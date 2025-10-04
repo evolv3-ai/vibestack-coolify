@@ -70,3 +70,6 @@ Thumbs.db
 
 # Random .md files
 auto-crt.md
+
+# Claude Code local configuration
+CLAUDE.md
