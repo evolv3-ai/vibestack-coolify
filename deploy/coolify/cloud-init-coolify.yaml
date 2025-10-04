@@ -343,20 +343,14 @@ runcmd:
     timeout 120 bash -c 'while sudo lsof /var/lib/dpkg/lock-frontend >/dev/null 2>&1; do echo "Waiting for final dpkg lock clear..." >> /var/log/vibestack-setup.log; sleep 3; done'
     echo "All package locks cleared, starting Ansible..." >> /var/log/vibestack-setup.log
 
-  # Run Ansible via systemd-run with --wait to ensure cloud-init waits for completion
+  # Run Ansible directly (cloud-init waits for runcmd to complete)
   - |
-    echo "Starting Ansible execution via systemd-run at $(date)" >> /var/log/vibestack-setup.log
-    if systemd-run \
-      --unit=vibestack-ansible \
-      --wait \
-      --collect \
-      --property=Type=oneshot \
-      --property=TimeoutStartSec=1800 \
-      /opt/vibestack/run-ansible.sh; then
-      echo "Ansible execution completed successfully (cloud-init waited for completion)" >> /var/log/vibestack-setup.log
+    echo "Starting Ansible execution at $(date)" >> /var/log/vibestack-setup.log
+    if /opt/vibestack/run-ansible.sh; then
+      echo "Ansible execution completed successfully at $(date)" >> /var/log/vibestack-setup.log
     else
       EXIT_CODE=$?
-      echo "Ansible execution failed with exit code $EXIT_CODE (cloud-init waited for completion)" >> /var/log/vibestack-setup.log
+      echo "Ansible execution failed with exit code $EXIT_CODE at $(date)" >> /var/log/vibestack-setup.log
       echo "Check /var/log/ansible-setup.log for details" >> /var/log/vibestack-setup.log
       # Continue anyway - partial setup might be recoverable
     fi
