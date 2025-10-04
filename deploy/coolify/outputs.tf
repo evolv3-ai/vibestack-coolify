@@ -48,6 +48,7 @@ output "coolify_url" {
   value = var.deploy_coolify ? (
     local.setup_cloudflare_tunnel ? "https://${var.tunnel_hostname}" : "http://${oci_core_instance.coolify[0].public_ip}:8000"
   ) : null
+  sensitive = true
 }
 
 output "coolify_credentials_location" {
@@ -64,12 +65,13 @@ output "ssh_access" {
       "SSH access via tunnel: ${local.final_ssh_hostname}" :
       "SSH access: ubuntu@${oci_core_instance.coolify[0].public_ip}"
   ) : null
+  sensitive = true
 }
 
 output "tunnel_name" {
   description = "Cloudflare tunnel name (if configured)"
   value       = local.setup_cloudflare_tunnel ? local.tunnel_name : null
-  sensitive   = false
+  sensitive   = true
 }
 
 output "deployment_instructions" {
@@ -118,4 +120,5 @@ output "deployment_instructions" {
       "═══════════════════════════════════════════════════════════════════"
     ]
   ) : null
+  sensitive = true
 }

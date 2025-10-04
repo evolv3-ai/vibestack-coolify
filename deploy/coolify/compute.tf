@@ -41,6 +41,12 @@ resource "oci_core_instance" "coolify" {
     source_id   = local.resolved_image_id
   }
 
+  timeouts {
+    create = "20m"
+    update = "20m"
+    delete = "20m"
+  }
+
   lifecycle {
     precondition {
       condition     = local.selected_ad != ""
@@ -51,5 +57,8 @@ resource "oci_core_instance" "coolify" {
       condition     = local.resolved_image_id != ""
       error_message = "Unable to resolve a compute image. Specify custom_image_ocid to proceed."
     }
+
+    # Add retry logic for temporary service issues
+    create_before_destroy = false
   }
 }

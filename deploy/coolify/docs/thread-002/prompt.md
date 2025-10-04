@@ -1,0 +1,1 @@
+deploy\coolify\docs\application-information-mapping.md shows which variable are output on the Application information tab within Oracle's ORM. Add deployment_instructions to the Application information tabl

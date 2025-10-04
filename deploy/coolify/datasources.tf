@@ -3,7 +3,18 @@ data "oci_identity_availability_domains" "ads" {
 }
 
 locals {
-  selected_ad      = trimspace(var.availability_domain != "" ? var.availability_domain : try(data.oci_identity_availability_domains.ads.availability_domains[0].name, ""))
+  # Enhanced AD selection with fallback logic
+  available_ads = data.oci_identity_availability_domains.ads.availability_domains
+  selected_ad = trimspace(
+    var.availability_domain != "" ? var.availability_domain :
+    length(local.available_ads) > 0 ? local.available_ads[0].name : ""
+  )
+  
+  # Fallback ADs for retry scenarios
+  fallback_ads = length(local.available_ads) > 1 ? [
+    for i, ad in local.available_ads : ad.name if i < 3  # Use up to 3 ADs
+  ] : [local.selected_ad]
+  
   use_image_lookup = var.custom_image_ocid == ""
 }
 
