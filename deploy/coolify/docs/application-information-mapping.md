@@ -17,13 +17,13 @@ The root module defines the following outputs in [`outputs.tf`](../outputs.tf).
 | `coolify_credentials_location` | ❌ No | (auto-labelled) | false | `var.deploy_coolify ? ("SSH to server and view: /opt/vibestack/coolify-root-user.env") : null` |
 | `ssh_access` | ❌ No | (auto-labelled) | false | `var.deploy_coolify ? (local.setup_cloudflare_tunnel ? "SSH access via tunnel: local.final_ssh_hostname" : "SSH access: ubuntu@oci_core_instance.coolify[0].public_ip") : null` |
 | `tunnel_name` | ❌ No | (auto-labelled) | false | `local.setup_cloudflare_tunnel ? local.tunnel_name : null` |
-| `deployment_instructions` | ❌ No | (auto-labelled) | false | `var.deploy_coolify ? (local.setup_cloudflare_tunnel ? ['═══════════════════════════════════════════════════════════════════', '✅ COOLIFY DEPLOYED - FULLY AUTOMATED SETUP', '════…` |
+| `deployment_instructions` | ✅ Yes | Deployment instructions | false | `var.deploy_coolify ? (local.setup_cloudflare_tunnel ? ['═══════════════════════════════════════════════════════════════════', '✅ COOLIFY DEPLOYED - FULLY AUTOMATED SETUP', '════…` |
 
 ## Findings
 
-- Outputs missing from `schema.yaml`: ``cloudflare_tunnel_enabled`, `coolify_credentials_location`, `coolify_url`, `deployment_instructions`, `ssh_access`, `tunnel_name``.
+- Outputs missing from `schema.yaml`: ``cloudflare_tunnel_enabled`, `coolify_credentials_location`, `coolify_url`, `ssh_access`, `tunnel_name``.
 - No extra outputs are declared in `schema.yaml`.
-- `schema.yaml` does not currently define an `outputGroups` entry for **Application information**.
+- The following outputs are surfaced on the **Application information** tab: ``compartment`, `network`, `coolify_server`, `security_list_ingress_ports`, `deployment_instructions``.
 
 ## Surface additional outputs on Application information
 
