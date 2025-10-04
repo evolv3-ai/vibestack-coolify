@@ -57,7 +57,7 @@ write_files:
 
       cd /opt/vibestack
       export ANSIBLE_LOG_PATH="$ANSIBLE_LOG"
-      export ANSIBLE_VERBOSITY="${ANSIBLE_VERBOSITY:-2}"
+      export ANSIBLE_VERBOSITY="$${ANSIBLE_VERBOSITY:-2}"
 
       # Find ansible-playbook in common locations
       for path in "$(command -v ansible-playbook 2>/dev/null)" \
