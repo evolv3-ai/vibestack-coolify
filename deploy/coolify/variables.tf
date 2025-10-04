@@ -226,6 +226,18 @@ variable "skip_ansible_execution" {
   default     = false
 }
 
+variable "ssh_private_key_path" {
+  description = "Path to SSH private key for connecting to instances. Required only when using Terraform locally (not needed for OCI Resource Manager)."
+  type        = string
+  default     = ""
+}
+
+variable "wait_for_ansible" {
+  description = "Wait for Ansible to complete before Terraform finishes. Set to false when using OCI Resource Manager or if you don't have SSH access."
+  type        = bool
+  default     = false
+}
+
 # =============================================================================
 # COOLIFY ROOT USER CONFIGURATION
 # =============================================================================

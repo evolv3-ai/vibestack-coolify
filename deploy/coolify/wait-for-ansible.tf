@@ -1,8 +1,10 @@
 # Wait for Ansible completion using remote-exec provisioner
 # This ensures Terraform doesn't complete until Ansible finishes
+# NOTE: Only works when running Terraform locally with SSH access
+# Disabled by default for OCI Resource Manager compatibility
 
 resource "null_resource" "wait_for_ansible" {
-  count = var.deploy_coolify && !var.skip_ansible_execution ? 1 : 0
+  count = var.deploy_coolify && !var.skip_ansible_execution && var.wait_for_ansible ? 1 : 0
 
   depends_on = [
     oci_core_instance.coolify,
@@ -13,7 +15,7 @@ resource "null_resource" "wait_for_ansible" {
     type        = "ssh"
     host        = oci_core_instance.coolify[0].public_ip
     user        = "ubuntu"
-    private_key = file(var.private_key_path)
+    private_key = file(var.ssh_private_key_path)
     timeout     = "30m"
   }
 
