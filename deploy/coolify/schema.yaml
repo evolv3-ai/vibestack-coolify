@@ -248,3 +248,14 @@ outputs:
     title: "Coolify server"
   security_list_ingress_ports:
     title: "Open TCP ports"
+  deployment_instructions:
+    title: "Deployment instructions"
+  
+outputGroups:
+  - title: "Application information"
+    outputs:
+      - compartment
+      - network
+      - coolify_server
+      - security_list_ingress_ports
+      - deployment_instructions
