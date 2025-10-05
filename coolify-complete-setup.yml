@@ -801,6 +801,37 @@
       register: public_ip
       ignore_errors: yes
 
+    - name: Read Coolify credentials for deployment-success.txt
+      shell: |
+        if [ -f /opt/vibestack/coolify-root-user.env ]; then
+          echo "COOLIFY_ROOT_USERNAME=$(grep "^COOLIFY_ROOT_USERNAME=" /opt/vibestack/coolify-root-user.env | cut -d'=' -f2)"
+          echo "COOLIFY_ROOT_EMAIL=$(grep "^COOLIFY_ROOT_EMAIL=" /opt/vibestack/coolify-root-user.env | cut -d'=' -f2)"
+          echo "COOLIFY_ROOT_PASSWORD=$(grep "^COOLIFY_ROOT_PASSWORD=" /opt/vibestack/coolify-root-user.env | cut -d'=' -f2)"
+        else
+          echo "COOLIFY_ROOT_USERNAME=admin"
+          echo "COOLIFY_ROOT_EMAIL=admin@example.com"
+          echo "COOLIFY_ROOT_PASSWORD=password"
+        fi
+      register: coolify_creds
+      ignore_errors: yes
+
+    - name: Read tunnel token for deployment-success.txt
+      shell: |
+        if [ -f /opt/vibestack/tunnel-info.txt ]; then
+          grep "^TUNNEL_TOKEN=" /opt/vibestack/tunnel-info.txt | cut -d'=' -f2
+        else
+          echo "TUNNEL_TOKEN_NOT_AVAILABLE"
+        fi
+      register: tunnel_token_value
+      ignore_errors: yes
+      when: setup_tunnel | default(false)
+
+    - name: Parse Coolify credentials
+      set_fact:
+        coolify_username: "{{ coolify_creds.stdout_lines | select('match', '^COOLIFY_ROOT_USERNAME=') | map('regex_replace', '^COOLIFY_ROOT_USERNAME=(.+)$', '\\1') | first | default('admin') }}"
+        coolify_email: "{{ coolify_creds.stdout_lines | select('match', '^COOLIFY_ROOT_EMAIL=') | map('regex_replace', '^COOLIFY_ROOT_EMAIL=(.+)$', '\\1') | first | default('admin@example.com') }}"
+        coolify_password: "{{ coolify_creds.stdout_lines | select('match', '^COOLIFY_ROOT_PASSWORD=') | map('regex_replace', '^COOLIFY_ROOT_PASSWORD=(.+)$', '\\1') | first | default('password') }}"
+
     - name: Create success information file
       copy:
         content: |
@@ -808,15 +839,15 @@
           # Generated: {{ ansible_date_time.iso8601 }}
 
           ## Access Information
-          {% if setup_tunnel | default(false) %}
           🌐 Coolify URL: http://{{ public_ip.content | trim if public_ip.content is defined else ansible_default_ipv4.address }}:{{ coolify_port }}
           🔐 SSH Access: {{ public_ip.content | trim if public_ip.content is defined else ansible_default_ipv4.address }}:22
-          🔑 Login Credentials: cat /opt/vibestack/coolify-root-user.env
-          {% else %}
-          🌐 Coolify URL: http://{{ public_ip.content | trim if public_ip.content is defined else ansible_default_ipv4.address }}:{{ coolify_port }}
-          🔐 SSH Access: {{ public_ip.content | trim if public_ip.content is defined else ansible_default_ipv4.address }}:22
-          🔑 Login Credentials: cat /opt/vibestack/coolify-root-user.env
-          {% endif %}
+
+          ## Coolify Login Credentials
+          👤 Username: {{ coolify_username }}
+          📧 Email: {{ coolify_email }}
+          🔑 Password: {{ coolify_password }}
+
+          ⚠️  IMPORTANT: Keep these credentials secure! Change the password after first login.
 
           ## Service Status
           ✅ Coolify: Running on port {{ coolify_port }}
@@ -843,18 +874,45 @@
           ## Next Steps
           {% if setup_tunnel | default(false) %}
           1. Access Coolify at http://{{ public_ip.content | trim if public_ip.content is defined else ansible_default_ipv4.address }}:{{ coolify_port }}
-          2. Login using credentials from: /opt/vibestack/coolify-root-user.env
-          3. Complete the initial setup wizard
-          4. Verify Cloudflare tunnel is working
-          5. Once tunnel is active, access via: https://{{ cloudflare_config.TUNNEL_HOSTNAME }}
+
+          2. Login using the credentials above:
+             - Username: {{ coolify_username }}
+             - Password: {{ coolify_password }}
+
+          3. Complete the initial setup wizard in Coolify
+
+          4. Create Cloudflared service in Coolify for HTTPS tunnel access:
+             a. Go to Services → Add Service → Docker Compose
+             b. Use the cloudflared image
+             c. Add environment variable TUNNEL_TOKEN with this value:
+
+             🔑 TUNNEL_TOKEN: {{ tunnel_token_value.stdout | default('See /opt/vibestack/tunnel-info.txt') }}
+
+          5. Once the Cloudflared service is running in Coolify, access via:
+             Primary URL: https://{{ cloudflare_config.TUNNEL_HOSTNAME }}
+             Wildcard: https://{{ cloudflare_config.TUNNEL_HOSTNAME | regex_replace('^[^.]+\\.', '') }}
+
           6. Add your Git repositories and start deploying applications
           {% else %}
           1. Access Coolify at http://{{ public_ip.content | trim if public_ip.content is defined else ansible_default_ipv4.address }}:{{ coolify_port }}
-          2. Login using credentials from: /opt/vibestack/coolify-root-user.env
+
+          2. Login using the credentials above:
+             - Username: {{ coolify_username }}
+             - Password: {{ coolify_password }}
+
           3. Complete the initial setup wizard
+
           4. Setup Cloudflare tunnel in Coolify for HTTPS access
+
           5. Add your Git repositories and start deploying applications
           {% endif %}
+
+          ## Additional Resources
+          📁 All configuration files are in: /opt/vibestack/
+          {% if setup_tunnel | default(false) %}
+          📋 Tunnel details: /opt/vibestack/tunnel-info.txt
+          {% endif %}
+          📝 Root credentials backup: /opt/vibestack/coolify-root-user.env
         dest: /opt/vibestack/deployment-success.txt
         mode: '0644'
 
@@ -955,29 +1013,9 @@
     #         group: root
     #       when: coolify_root_config.stat.exists
 
-    # Save Coolify access credentials (simplified version)
-    - name: Save Coolify access credentials to file
-      shell: |
-        if [ -f /opt/vibestack/coolify-root-user.env ]; then
-          # Read credentials safely using grep/cut
-          COOLIFY_ROOT_USERNAME=$(grep "^COOLIFY_ROOT_USERNAME=" /opt/vibestack/coolify-root-user.env | cut -d'=' -f2)
-          COOLIFY_ROOT_EMAIL=$(grep "^COOLIFY_ROOT_EMAIL=" /opt/vibestack/coolify-root-user.env | cut -d'=' -f2)
-          COOLIFY_ROOT_PASSWORD=$(grep "^COOLIFY_ROOT_PASSWORD=" /opt/vibestack/coolify-root-user.env | cut -d'=' -f2)
-
-          {
-            echo "# Coolify Admin Access Credentials"
-            echo "# Generated: $(date -Iseconds)"
-            echo "# Credentials set during installation via environment variables"
-            echo ""
-            echo "Username: $COOLIFY_ROOT_USERNAME"
-            echo "Email: $COOLIFY_ROOT_EMAIL"
-            echo "Password: $COOLIFY_ROOT_PASSWORD"
-            echo ""
-            echo "Note: Keep these credentials secure. They provide admin access to your Coolify instance."
-          } > /opt/vibestack/coolify-credentials.txt
-          chmod 600 /opt/vibestack/coolify-credentials.txt
-          echo "Credentials saved to coolify-credentials.txt"
-        fi
+    # REMOVED: coolify-credentials.txt creation (redundant)
+    # Credentials are now included directly in deployment-success.txt
+    # and are also available in coolify-root-user.env
 
     # =============================================================================
     # COOLIFY DATABASE CONFIGURATION (Automated Domain Settings)
