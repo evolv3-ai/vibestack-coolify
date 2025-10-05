@@ -843,7 +843,6 @@
           🔐 SSH Access: {{ public_ip.content | trim if public_ip.content is defined else ansible_default_ipv4.address }}:22
 
           ## Coolify Login Credentials
-          👤 Username: {{ coolify_username }}
           📧 Email: {{ coolify_email }}
           🔑 Password: {{ coolify_password }}
 
@@ -876,7 +875,7 @@
           1. Access Coolify at http://{{ public_ip.content | trim if public_ip.content is defined else ansible_default_ipv4.address }}:{{ coolify_port }}
 
           2. Login using the credentials above:
-             - Username: {{ coolify_username }}
+             - Email: {{ coolify_email }}
              - Password: {{ coolify_password }}
 
           3. Complete the initial setup wizard in Coolify
@@ -884,9 +883,13 @@
           4. Create Cloudflared service in Coolify for HTTPS tunnel access:
              a. Go to Services → Add Service → Docker Compose
              b. Use the cloudflared image
-             c. Add environment variable TUNNEL_TOKEN with this value:
-
-             🔑 TUNNEL_TOKEN: {{ tunnel_token_value.stdout | default('See /opt/vibestack/tunnel-info.txt') }}
+             c. Configure the service settings:
+                - Destination URL: https://localhost:443
+                - Environment variable TUNNEL_TOKEN:
+                  🔑 {{ tunnel_token_value.stdout | default('See /opt/vibestack/tunnel-info.txt') }}
+             d. Additional App Settings → TLS:
+                - Origin Server Name: {{ cloudflare_config.TUNNEL_HOSTNAME | regex_replace('^[^.]+\\.', '') }}
+                - No TLS Verify: ON (enabled)
 
           5. Once the Cloudflared service is running in Coolify, access via:
              Primary URL: https://{{ cloudflare_config.TUNNEL_HOSTNAME }}
@@ -897,7 +900,7 @@
           1. Access Coolify at http://{{ public_ip.content | trim if public_ip.content is defined else ansible_default_ipv4.address }}:{{ coolify_port }}
 
           2. Login using the credentials above:
-             - Username: {{ coolify_username }}
+             - Email: {{ coolify_email }}
              - Password: {{ coolify_password }}
 
           3. Complete the initial setup wizard
