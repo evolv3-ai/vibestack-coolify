@@ -215,6 +215,84 @@
             delay: 30
             timeout: 300
 
+        - name: Setup Coolify SSH keys for localhost server
+          block:
+            - name: Ensure OpenSSH server is configured properly
+              lineinfile:
+                path: /etc/ssh/sshd_config
+                regexp: "{{ item.regexp }}"
+                line: "{{ item.line }}"
+                state: present
+              loop:
+                - { regexp: '^#?PermitRootLogin', line: 'PermitRootLogin prohibit-password' }
+                - { regexp: '^#?PubkeyAuthentication', line: 'PubkeyAuthentication yes' }
+              notify: restart_sshd
+
+            - name: Create SSH keys directory structure
+              file:
+                path: "{{ item }}"
+                state: directory
+                owner: 9999
+                group: 9999
+                mode: '0755'
+              loop:
+                - /data/coolify/ssh
+                - /data/coolify/ssh/keys
+                - /data/coolify/ssh/mux
+
+            - name: Generate SSH key pair for Coolify localhost
+              command: ssh-keygen -t ed25519 -a 100 -f /data/coolify/ssh/keys/id.root@host.docker.internal -q -N "" -C "root@coolify"
+              args:
+                creates: /data/coolify/ssh/keys/id.root@host.docker.internal
+
+            - name: Set SSH key ownership and permissions
+              file:
+                path: "{{ item.path }}"
+                mode: "{{ item.mode }}"
+                owner: 9999
+                group: 9999
+              loop:
+                - { path: '/data/coolify/ssh/keys/id.root@host.docker.internal', mode: '0600' }
+                - { path: '/data/coolify/ssh/keys/id.root@host.docker.internal.pub', mode: '0644' }
+
+            - name: Setup root SSH directory and authorized_keys
+              shell: |
+                mkdir -p /root/.ssh
+                chmod 700 /root/.ssh
+                touch /root/.ssh/authorized_keys
+                chmod 600 /root/.ssh/authorized_keys
+
+                # Add Coolify's public key if not already present
+                COOLIFY_PUB_KEY=$(cat /data/coolify/ssh/keys/id.root@host.docker.internal.pub)
+                if ! grep -q "$COOLIFY_PUB_KEY" /root/.ssh/authorized_keys; then
+                  echo "$COOLIFY_PUB_KEY" >> /root/.ssh/authorized_keys
+                  echo "Added Coolify SSH key to root authorized_keys"
+                else
+                  echo "Coolify SSH key already in root authorized_keys"
+                fi
+
+            - name: Update Coolify database localhost server user to root
+              shell: |
+                # Wait for database to be ready
+                sleep 5
+                # Update server user to root (user is a reserved keyword, needs quotes)
+                docker exec coolify-db psql -U coolify -d coolify -c "UPDATE servers SET \"user\"='root' WHERE id=0;"
+              register: db_update
+              failed_when: false
+              changed_when: db_update.rc == 0
+
+            - name: Restart Coolify to reinitialize with SSH configuration
+              shell: |
+                docker restart coolify
+                sleep 20
+                echo "Coolify restarted with SSH keys configured"
+
+            - name: Wait for Coolify to be ready after restart
+              wait_for:
+                port: "{{ coolify_port }}"
+                delay: 5
+                timeout: 120
+
         - name: Set Coolify data directory permissions for ubuntu user
           file:
             path: /data/coolify
@@ -1184,3 +1262,8 @@
               - "📄 All credentials saved to: /opt/vibestack/"
               - ""
               - "🚀 Ready to deploy applications with Coolify!"
+  handlers:
+    - name: restart_sshd
+      systemd:
+        name: "{{ 'ssh' if ansible_distribution == 'Ubuntu' or ansible_distribution == 'Debian' else 'sshd' }}"
+        state: restarted
