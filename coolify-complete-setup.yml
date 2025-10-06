@@ -867,8 +867,7 @@
 
           ## Next Steps
           {% if setup_tunnel | default(false) %}
-          1. Access Coolify at https://{{ cloudflare_config.TUNNEL_HOSTNAME }}
-             (Or via IP: http://{{ public_ip.content | trim if public_ip.content is defined else ansible_default_ipv4.address }}:{{ coolify_port }})
+          1. Access Coolify at http://{{ public_ip.content | trim if public_ip.content is defined else ansible_default_ipv4.address }}:{{ coolify_port }}
 
           2. Login using the credentials above:
              - Email: {{ coolify_email }}
@@ -876,10 +875,19 @@
 
           3. Complete the initial setup wizard in Coolify
 
-          4. Add your Git repositories and start deploying applications
+          4. Create Cloudflared service in Coolify for HTTPS tunnel access:
+             a. On the Add New Resources page search for, "Cloudflared"
+             b. Click on the "Cloudflared" resource
+             c. Click on "Environment Variables"
+             d. Copy the tunnel token below and paste it into the CLOUDFLARE_TUNNEL_TOKEN field:
+                🔑 {{ tunnel_token_value.stdout | default('See /opt/vibestack/tunnel-info.txt') }}
+             e. Click on "UPDATE" below the field
+             f. Click "Deploy"
+             g. You should see a green dot to the left of "Running" on the line just below Configuration
 
-          📝 Note: Cloudflare tunnel is already configured and running via systemd service.
-              Tunnel is configured for HTTPS on port 443 with wildcard routing.
+          5. You should now be able to access Coolify via https://{{ cloudflare_config.TUNNEL_HOSTNAME }}
+
+          6. Add your Git repositories and start deploying applications
           {% else %}
           1. Access Coolify at http://{{ public_ip.content | trim if public_ip.content is defined else ansible_default_ipv4.address }}:{{ coolify_port }}
 
