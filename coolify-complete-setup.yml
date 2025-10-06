@@ -255,21 +255,25 @@
                 - { path: '/data/coolify/ssh/keys/id.root@host.docker.internal', mode: '0600' }
                 - { path: '/data/coolify/ssh/keys/id.root@host.docker.internal.pub', mode: '0644' }
 
-            - name: Setup root SSH directory and authorized_keys
-              shell: |
-                mkdir -p /root/.ssh
-                chmod 700 /root/.ssh
-                touch /root/.ssh/authorized_keys
-                chmod 600 /root/.ssh/authorized_keys
+            - name: Ensure root .ssh directory exists
+              file:
+                path: /root/.ssh
+                state: directory
+                owner: root
+                group: root
+                mode: '0700'
 
-                # Add Coolify's public key if not already present
-                COOLIFY_PUB_KEY=$(cat /data/coolify/ssh/keys/id.root@host.docker.internal.pub)
-                if ! grep -q "$COOLIFY_PUB_KEY" /root/.ssh/authorized_keys; then
-                  echo "$COOLIFY_PUB_KEY" >> /root/.ssh/authorized_keys
-                  echo "Added Coolify SSH key to root authorized_keys"
-                else
-                  echo "Coolify SSH key already in root authorized_keys"
-                fi
+            - name: Read Coolify public key
+              slurp:
+                src: /data/coolify/ssh/keys/id.root@host.docker.internal.pub
+              register: coolify_pubkey
+
+            - name: Add Coolify SSH key to root authorized_keys
+              authorized_key:
+                user: root
+                state: present
+                key: "{{ coolify_pubkey.content | b64decode }}"
+                comment: "coolify-localhost"
 
             - name: Update Coolify database localhost server user to root
               shell: |
