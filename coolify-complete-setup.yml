@@ -676,7 +676,6 @@
               ingress:
                 - hostname: "*.{{ base_domain }}"
                   service: {{ tunnel_service }}
-                  path: "*"
                   originRequest:
                     noTLSVerify: {{ needs_tls_verify_skip }}
                     connectTimeout: 30s
