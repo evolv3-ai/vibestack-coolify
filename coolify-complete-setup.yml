@@ -658,16 +658,10 @@
             group: root
           when: tunnel_secret is defined and tunnel_secret != ''
 
-        - name: Check if Traefik proxy is running (for Full TLS)
-          shell: docker ps --filter "name=coolify-proxy" --format "table {{ '{{.Names}}' }}\t{{ '{{.Ports}}' }}" | grep -q "0.0.0.0:443"
-          register: traefik_running
-          failed_when: false
-          changed_when: false
-
         - name: Set tunnel service endpoint
           set_fact:
-            tunnel_service: "{{ 'https://localhost:443' if traefik_running.rc == 0 else 'http://localhost:' + coolify_port }}"
-            needs_tls_verify_skip: "{{ traefik_running.rc == 0 }}"
+            tunnel_service: "https://localhost:443"
+            needs_tls_verify_skip: true
 
         - name: Extract base domain for wildcard routing
           set_fact:
@@ -711,7 +705,8 @@
                   - hostname: "*.{{ base_domain }}"
                     service: "{{ tunnel_service }}"
                     originRequest:
-                      noTLSVerify: "{{ needs_tls_verify_skip }}"
+                      noTLSVerify: true
+                      originServerName: "{{ base_domain }}"
                   - service: "http_status:404"
             return_content: yes
           register: remote_config_result
@@ -872,7 +867,8 @@
 
           ## Next Steps
           {% if setup_tunnel | default(false) %}
-          1. Access Coolify at http://{{ public_ip.content | trim if public_ip.content is defined else ansible_default_ipv4.address }}:{{ coolify_port }}
+          1. Access Coolify at https://{{ cloudflare_config.TUNNEL_HOSTNAME }}
+             (Or via IP: http://{{ public_ip.content | trim if public_ip.content is defined else ansible_default_ipv4.address }}:{{ coolify_port }})
 
           2. Login using the credentials above:
              - Email: {{ coolify_email }}
@@ -880,22 +876,10 @@
 
           3. Complete the initial setup wizard in Coolify
 
-          4. Create Cloudflared service in Coolify for HTTPS tunnel access:
-             a. Go to Services → Add Service → Docker Compose
-             b. Use the cloudflared image
-             c. Configure the service settings:
-                - Destination URL: https://localhost:443
-                - Environment variable TUNNEL_TOKEN:
-                  🔑 {{ tunnel_token_value.stdout | default('See /opt/vibestack/tunnel-info.txt') }}
-             d. Additional App Settings → TLS:
-                - Origin Server Name: {{ cloudflare_config.TUNNEL_HOSTNAME | regex_replace('^[^.]+\\.', '') }}
-                - No TLS Verify: ON (enabled)
+          4. Add your Git repositories and start deploying applications
 
-          5. Once the Cloudflared service is running in Coolify, access via:
-             Primary URL: https://{{ cloudflare_config.TUNNEL_HOSTNAME }}
-             Wildcard: https://{{ cloudflare_config.TUNNEL_HOSTNAME | regex_replace('^[^.]+\\.', '') }}
-
-          6. Add your Git repositories and start deploying applications
+          📝 Note: Cloudflare tunnel is already configured and running via systemd service.
+              Tunnel is configured for HTTPS on port 443 with wildcard routing.
           {% else %}
           1. Access Coolify at http://{{ public_ip.content | trim if public_ip.content is defined else ansible_default_ipv4.address }}:{{ coolify_port }}
 
@@ -916,6 +900,47 @@
           📋 Tunnel details: /opt/vibestack/tunnel-info.txt
           {% endif %}
           📝 Root credentials backup: /opt/vibestack/coolify-root-user.env
+
+          {% if setup_tunnel | default(false) %}
+          ## Troubleshooting FAQ
+
+          ### ❌ Cloudflare Tunnel Error 1033 - "Argo Tunnel error"
+
+          **Symptom**: When accessing Coolify via domain (https://{{ cloudflare_config.TUNNEL_HOSTNAME }}),
+          you get a Cloudflare Error 1033.
+
+          **Cause**: The Cloudflare tunnel configuration may not be properly set for HTTPS/TLS.
+
+          **Solution**: Verify tunnel configuration settings:
+
+          1. Check tunnel is running:
+             sudo systemctl status cloudflared-vibestack
+
+          2. Check tunnel configuration:
+             cat /etc/cloudflared/config.yml
+
+             Should show:
+             - service: https://localhost:443
+             - originRequest.noTLSVerify: true
+             - originRequest.originServerName: {{ cloudflare_config.TUNNEL_HOSTNAME | regex_replace('^[^.]+\\.', '') }}
+
+          3. If configuration is incorrect, the tunnel settings should have been set
+             automatically via Cloudflare API. Check remote tunnel config in Cloudflare dashboard:
+             - Login to Cloudflare Dashboard
+             - Navigate to Zero Trust → Networks → Tunnels
+             - Click on your tunnel: {{ cloudflare_config.TUNNEL_HOSTNAME | regex_replace('^[^.]+\\.', '') }}
+             - Verify Public Hostname settings:
+               * Service: https://localhost:443
+               * Additional application settings → TLS:
+                 - Origin Server Name: {{ cloudflare_config.TUNNEL_HOSTNAME | regex_replace('^[^.]+\\.', '') }}
+                 - No TLS Verify: ON (enabled)
+
+          4. If settings are wrong, restart the tunnel service:
+             sudo systemctl restart cloudflared-vibestack
+             sudo journalctl -u cloudflared-vibestack -f
+
+          5. Access Coolify at https://{{ cloudflare_config.TUNNEL_HOSTNAME }}
+          {% endif %}
         dest: /opt/vibestack/deployment-success.txt
         mode: '0644'
 
