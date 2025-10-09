@@ -931,21 +931,6 @@
           ✅ Cloudflare Tunnel: Configured and running
           {% endif %}
 
-          ## Management Commands
-          # Check Coolify status
-          sudo docker ps | grep coolify
-
-          # Coolify logs
-          sudo docker logs coolify
-
-          {% if setup_tunnel | default(false) %}
-          # Tunnel status
-          sudo systemctl status cloudflared-vibestack
-
-          # Tunnel logs
-          sudo journalctl -u cloudflared-vibestack -f
-          {% endif %}
-
           ## Next Steps
           {% if setup_tunnel | default(false) %}
           1. Access Coolify at http://{{ public_ip.content | trim if public_ip.content is defined else ansible_default_ipv4.address }}:{{ coolify_port }}
@@ -1030,8 +1015,22 @@
 
           5. Access Coolify at https://{{ cloudflare_config.TUNNEL_HOSTNAME }}
           {% endif %}
-        dest: /opt/vibestack/deployment-success.txt
-        mode: '0644'
+
+          ## Management Commands
+          # Check Coolify status
+          sudo docker ps | grep coolify
+
+          # Coolify logs
+          sudo docker logs coolify
+
+          {% if setup_tunnel | default(false) %}
+          # Tunnel status
+          sudo systemctl status cloudflared-vibestack
+
+          # Tunnel logs
+          sudo journalctl -u cloudflared-vibestack -f
+          {% endif %}
+
 
     # =============================================================================
     # COOLIFY ROOT USER CONFIGURATION
