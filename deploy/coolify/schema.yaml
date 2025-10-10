@@ -18,6 +18,7 @@ variableGroups:
     variables:
       - ssh_authorized_keys
       - instance_shape
+      - enable_capacity_check
       - availability_domain
       - deployment_label
       - custom_image_ocid
@@ -92,6 +93,11 @@ variables:
     title: "Compute shape"
     description: "Compute shape to use for the server."
     default: "VM.Standard.A1.Flex"
+  enable_capacity_check:
+    type: boolean
+    title: "Check capacity before deployment"
+    description: "Verify A1 Flex capacity is available before attempting deployment. Prevents failed deployments due to insufficient resources."
+    default: true
   availability_domain:
     type: string
     title: "Availability domain"
@@ -107,20 +113,26 @@ variables:
   coolify_ocpus:
     type: integer
     title: "Coolify OCPUs"
-    description: "Number of OCPUs allocated to the Coolify server."
+    description: "Number of OCPUs allocated to the Coolify server (Always Free max: 4)."
+    required: true
     minimum: 1
+    maximum: 4
     default: 2
   coolify_memory_in_gbs:
     type: integer
     title: "Coolify memory (GB)"
-    description: "Memory assigned to the Coolify server in GB."
+    description: "Memory assigned to the Coolify server in GB (Always Free max: 24)."
+    required: true
     minimum: 1
+    maximum: 24
     default: 12
   coolify_block_volume_size_in_gbs:
     type: integer
     title: "Coolify data volume size (GB)"
-    description: "Size of the block volume attached to the Coolify server."
+    description: "Size of the block volume attached to the Coolify server (Always Free max: 200)."
+    required: true
     minimum: 50
+    maximum: 200
     default: 100
   coolify_custom_tcp_ports:
     type: array
@@ -160,13 +172,15 @@ variables:
   deploy_kasm:
     type: boolean
     title: "Deploy KASM server"
-    description: "Deploy KASM Workspaces server."
+    description: "Deploy KASM Workspaces server (for coolify-only package, keep this false)."
+    required: true
     default: false
     visible: false
   deploy_coolify:
     type: boolean
     title: "Deploy Coolify server"
-    description: "Deploy Coolify server."
+    description: "Deploy Coolify server (must be true for this package)."
+    required: true
     default: true
     visible: false
   enable_cloudflare_tunnel:

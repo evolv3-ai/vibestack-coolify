@@ -1,3 +1,30 @@
+# =============================================================================
+# PRE-DEPLOYMENT VALIDATION
+# =============================================================================
+# Validate deployment configuration before creating any resources
+
+resource "null_resource" "validate_deployment" {
+  lifecycle {
+    precondition {
+      condition     = var.deploy_coolify || var.deploy_kasm
+      error_message = "At least one of deploy_coolify or deploy_kasm must be true. For this Coolify-only package, deploy_coolify should be true."
+    }
+
+    precondition {
+      condition     = (var.deploy_coolify ? var.coolify_ocpus : 0) <= 4
+      error_message = "Total OCPUs (${var.deploy_coolify ? var.coolify_ocpus : 0}) exceeds Always Free limit of 4."
+    }
+
+    precondition {
+      condition     = (var.deploy_coolify ? var.coolify_memory_in_gbs : 0) <= 24
+      error_message = "Total memory (${var.deploy_coolify ? var.coolify_memory_in_gbs : 0}GB) exceeds Always Free limit of 24GB."
+    }
+  }
+}
+
+# =============================================================================
+# COOLIFY COMPUTE INSTANCE
+# =============================================================================
 
 resource "oci_core_instance" "coolify" {
   count               = var.deploy_coolify ? 1 : 0
@@ -50,6 +77,22 @@ resource "oci_core_instance" "coolify" {
     precondition {
       condition     = local.resolved_image_id != ""
       error_message = "Unable to resolve a compute image. Specify custom_image_ocid to proceed."
+    }
+
+    precondition {
+      condition     = !var.enable_capacity_check || try(data.external.capacity_check[0].result.available, "false") == "true"
+      error_message = <<-EOT
+        No A1 Flex capacity available in region ${var.region} for ${var.coolify_ocpus} OCPUs and ${var.coolify_memory_in_gbs}GB RAM.
+
+        Options:
+        1. Try again later (capacity changes frequently)
+        2. Try a different region
+        3. Try a smaller configuration (2 OCPUs, 12GB RAM)
+        4. Use the monitoring script for automated retry:
+           Extract the deployment package and run:
+           ./scripts/monitor-and-deploy.sh --stack-id <YOUR_STACK_OCID>
+        5. Disable capacity checking by unchecking "Check capacity before deployment"
+      EOT
     }
   }
 }

@@ -22,6 +22,69 @@ jobs:
     - name: Checkout repository
       uses: actions/checkout@v4
 
+    - name: Validate schema.yaml configuration
+      run: |
+        echo "🔍 Validating schema.yaml for required variables..."
+
+        # Critical variables that MUST be present and have defaults
+        CRITICAL_VARS=("deploy_coolify" "deploy_kasm" "coolify_ocpus" "coolify_memory_in_gbs" "coolify_block_volume_size_in_gbs")
+
+        SCHEMA_FILE="deploy/coolify/schema.yaml"
+        VALIDATION_FAILED=0
+
+        for var in "${CRITICAL_VARS[@]}"; do
+          echo "Checking variable: $var"
+
+          # Check if variable exists in schema
+          if ! grep -q "^\s*${var}:" "$SCHEMA_FILE"; then
+            echo "  ❌ ERROR: Variable '$var' not found in schema.yaml"
+            VALIDATION_FAILED=1
+            continue
+          fi
+
+          # Extract the variable section (from variable name to next variable or end)
+          VAR_SECTION=$(awk "/^\s*${var}:/,/^\s*[a-z_]+:/" "$SCHEMA_FILE" | head -n -1)
+
+          # Check if it has a default value
+          if ! echo "$VAR_SECTION" | grep -q "default:"; then
+            echo "  ⚠️  WARNING: Variable '$var' has no default value"
+          else
+            DEFAULT_VALUE=$(echo "$VAR_SECTION" | grep "default:" | head -1 | sed 's/.*default:\s*//')
+            echo "  ✓ Has default: $DEFAULT_VALUE"
+          fi
+
+          # Check if marked as required
+          if echo "$VAR_SECTION" | grep -q "required: true"; then
+            echo "  ✓ Marked as required"
+          else
+            echo "  ⚠️  WARNING: Variable '$var' not marked as 'required: true'"
+          fi
+        done
+
+        # Check for validation constraints on OCPU/memory variables
+        echo ""
+        echo "🔍 Checking validation constraints..."
+
+        for var in "coolify_ocpus" "coolify_memory_in_gbs"; do
+          VAR_SECTION=$(awk "/^\s*${var}:/,/^\s*[a-z_]+:/" "$SCHEMA_FILE" | head -n -1)
+
+          if echo "$VAR_SECTION" | grep -q "maximum:"; then
+            MAX_VALUE=$(echo "$VAR_SECTION" | grep "maximum:" | sed 's/.*maximum:\s*//')
+            echo "  ✓ $var has maximum: $MAX_VALUE"
+          else
+            echo "  ⚠️  WARNING: $var has no maximum constraint"
+          fi
+        done
+
+        if [ $VALIDATION_FAILED -eq 1 ]; then
+          echo ""
+          echo "❌ Schema validation failed! Critical variables are missing."
+          exit 1
+        fi
+
+        echo ""
+        echo "✅ Schema validation passed!"
+
     - name: Set release tag
       id: release_tag
       run: |

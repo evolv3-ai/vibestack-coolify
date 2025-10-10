@@ -1,6 +1,28 @@
 # Copy this file to terraform.tfvars and fill in the required values before running Terraform.
 
-# Required tenancy details
+# =============================================================================
+# DEPLOYMENT CONFIGURATION (CRITICAL - MUST BE SET)
+# =============================================================================
+# These variables control what gets deployed. For this Coolify-only package,
+# deploy_coolify MUST be true. Failure to set these will cause deployment to fail
+# with only network resources created (orphaned resources).
+
+deploy_coolify = true   # REQUIRED: Deploy Coolify server (must be true for this package)
+deploy_kasm    = false  # REQUIRED: Do not deploy KASM server (Coolify-only package)
+
+# Coolify Server Configuration (CRITICAL - MUST BE SET)
+# IMPORTANT: Check capacity first with: ../../scripts/check-oci-capacity.sh
+coolify_ocpus             = 2   # Always Free tier: 1-4 OCPUs (recommended: 2 or 4)
+coolify_memory_in_gbs     = 12  # Always Free tier: 1-24GB RAM (recommended: 12 or 24)
+coolify_block_volume_size_in_gbs = 100  # Coolify data storage: 50-200GB
+
+# Infrastructure Configuration (CRITICAL)
+# IMPORTANT: Set this to an AD with available capacity (check with capacity script)
+# availability_domain = "qkyj:US-ASHBURN-AD-1"  # Example format - check your region
+
+# =============================================================================
+# REQUIRED TENANCY DETAILS
+# =============================================================================
 # tenancy_ocid       = "ocid1.tenancy.oc1..example"
 # region             = "us-phoenix-1"
 # parent_compartment_ocid = "ocid1.tenancy.oc1..example"  # Use tenancy OCID for root compartment
@@ -15,12 +37,10 @@
 # Valid formats: ssh-rsa, ssh-ed25519, ecdsa-sha2-nistp256/384/521
 
 # Optional customizations
-# deployment_label                 = "dev"
-# availability_domain              = "kIdk:US-REGION-AD-1"
-# assign_public_ip                 = true
-# coolify_custom_tcp_ports         = [3000, 3001]
-# custom_image_ocid                = "ocid1.image.oc1..example"
-# coolify_block_volume_size_in_gbs = 100
+# deployment_label         = "dev"
+# assign_public_ip         = true
+# coolify_custom_tcp_ports = [3000, 3001]
+# custom_image_ocid        = "ocid1.image.oc1..example"
 
 # Ansible testing mode (set to true to skip automatic playbook execution)
 # skip_ansible_execution = false

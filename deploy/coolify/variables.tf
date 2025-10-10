@@ -80,6 +80,12 @@ variable "availability_domain" {
   default     = ""
 }
 
+variable "enable_capacity_check" {
+  description = "Check A1 Flex capacity before deployment to prevent failures due to insufficient resources"
+  type        = bool
+  default     = true
+}
+
 variable "deployment_label" {
   description = "Optional suffix appended to resource names to keep them unique."
   type        = string
@@ -108,18 +114,33 @@ variable "coolify_ocpus" {
   description = "Number of OCPUs allocated to the Coolify server."
   type        = number
   default     = 2
+
+  validation {
+    condition     = var.coolify_ocpus >= 1 && var.coolify_ocpus <= 4
+    error_message = "coolify_ocpus must be between 1 and 4 for Always Free tier."
+  }
 }
 
 variable "coolify_memory_in_gbs" {
   description = "Memory (in GB) allocated to the Coolify server."
   type        = number
   default     = 12
+
+  validation {
+    condition     = var.coolify_memory_in_gbs >= 1 && var.coolify_memory_in_gbs <= 24
+    error_message = "coolify_memory_in_gbs must be between 1 and 24 for Always Free tier."
+  }
 }
 
 variable "coolify_block_volume_size_in_gbs" {
   description = "Size of the additional block volume attached to the Coolify server."
   type        = number
   default     = 100
+
+  validation {
+    condition     = var.coolify_block_volume_size_in_gbs >= 50 && var.coolify_block_volume_size_in_gbs <= 200
+    error_message = "coolify_block_volume_size_in_gbs must be between 50 and 200 for Always Free tier."
+  }
 }
 
 variable "coolify_custom_tcp_ports" {

@@ -2,8 +2,26 @@ data "oci_identity_availability_domains" "ads" {
   compartment_id = var.tenancy_ocid
 }
 
+# Capacity check - verifies A1 Flex availability before deployment
+data "external" "capacity_check" {
+  count   = var.enable_capacity_check ? 1 : 0
+  program = ["bash", "${path.module}/scripts/terraform-capacity-check.sh"]
+
+  query = {
+    region     = var.region
+    ocpus      = tostring(var.coolify_ocpus)
+    memory_gb  = tostring(var.coolify_memory_in_gbs)
+    tenancy_id = var.tenancy_ocid
+  }
+}
+
 locals {
-  selected_ad      = trimspace(var.availability_domain != "" ? var.availability_domain : try(data.oci_identity_availability_domains.ads.availability_domains[0].name, ""))
+  # When capacity check is enabled, use the AD with available capacity
+  # Otherwise, use user-specified AD or first available
+  capacity_check_ad = var.enable_capacity_check ? try(data.external.capacity_check[0].result.availability_domain, "") : ""
+  fallback_ad       = var.availability_domain != "" ? var.availability_domain : try(data.oci_identity_availability_domains.ads.availability_domains[0].name, "")
+  selected_ad       = trimspace(var.enable_capacity_check && local.capacity_check_ad != "" ? local.capacity_check_ad : local.fallback_ad)
+
   use_image_lookup = var.custom_image_ocid == ""
 }
 
