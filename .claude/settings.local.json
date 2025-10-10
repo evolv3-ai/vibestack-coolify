@@ -49,7 +49,14 @@
       "mcp__ht-mcp__ht_create_session",
       "mcp__ht-mcp__ht_take_snapshot",
       "mcp__ht-mcp__ht_send_keys",
-      "Read(//usr/**)"
+      "Read(//usr/**)",
+      "Bash(terraform:*)",
+      "Bash(gh run watch:*)",
+      "Bash(gh release delete:*)",
+      "Read(//home/kasm-user/dv/docs/daniel-gold-oci/**)",
+      "Bash(test:*)",
+      "Read(//home/kasm-user/dv/projects/oci-cloudnative/scripts/**)",
+      "Bash(mkdir:*)"
     ],
     "deny": [],
     "ask": []

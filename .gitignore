@@ -73,3 +73,8 @@ auto-crt.md
 
 # Claude Code local configuration
 CLAUDE.md
+
+settings.local.json
+
+deployment-failure.md
+capacity-checking-implementation-spec.md
