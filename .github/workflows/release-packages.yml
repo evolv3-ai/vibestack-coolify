@@ -103,6 +103,10 @@ jobs:
         cp deploy/coolify/schema.yaml vibestack-coolify-package/
         cp deploy/coolify/cloud-init-*.yaml vibestack-coolify-package/ 2>/dev/null || true
 
+        # Copy scripts directory from root (required for capacity checking)
+        mkdir -p vibestack-coolify-package/scripts
+        cp scripts/*.sh vibestack-coolify-package/scripts/ 2>/dev/null || true
+
         # Create the zip file with vibestack- prefix for consistent naming
         cd vibestack-coolify-package
         zip -r ../vibestack-coolify.zip .
@@ -189,6 +193,9 @@ jobs:
           "locals.tf"
           "compartment.tf"
           "datasources.tf"
+          "scripts/terraform-capacity-check.sh"
+          "scripts/check-oci-capacity.sh"
+          "scripts/monitor-and-deploy.sh"
         )
 
         echo -e "\n✅ Checking vibestack-coolify.zip:"
